@@ -74,6 +74,8 @@ export default function LiveVoiceStudioPage() {
   // Fleet Channel Connector Panel state
   const [routingMode, setRoutingMode] = useState<'fleet' | 'custom'>('fleet');
   const [selectedFleetGuildId, setSelectedFleetGuildId] = useState<string>('');
+  const [manualGuildId, setManualGuildId] = useState<string>('');
+  const [guildInputMode, setGuildInputMode] = useState<'dropdown' | 'manual'>('dropdown');
   const [selectedFleetChannelId, setSelectedFleetChannelId] = useState<string>('');
   const [manualChannelId, setManualChannelId] = useState<string>('');
   const [channelInputMode, setChannelInputMode] = useState<'dropdown' | 'manual'>('manual');
@@ -155,7 +157,9 @@ export default function LiveVoiceStudioPage() {
           const targetGuild =
             guilds.find((g: any) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId) ||
             guilds[0];
-          setSelectedFleetGuildId(targetGuild.id || targetGuild.guildId);
+          const guildIdToUse = targetGuild.guildId || targetGuild.id;
+          setSelectedFleetGuildId(guildIdToUse);
+          setManualGuildId((prev) => prev || guildIdToUse);
 
           const voiceChannels = (targetGuild.channels || []).filter(
             (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
@@ -169,6 +173,9 @@ export default function LiveVoiceStudioPage() {
             // Default to manual mode if no voice channels configured
             setChannelInputMode('manual');
           }
+        } else {
+          setGuildInputMode('manual');
+          setChannelInputMode('manual');
         }
 
         // Auto-select ALL ready bots for the fleet
@@ -216,6 +223,7 @@ export default function LiveVoiceStudioPage() {
   // When fleet guild changes, update channel options
   const handleFleetGuildChange = (guildIdOrUuid: string) => {
     setSelectedFleetGuildId(guildIdOrUuid);
+    setManualGuildId(guildIdOrUuid);
     const targetGuild = guildsList.find(
       (g) => g.id === guildIdOrUuid || g.guildId === guildIdOrUuid
     );
@@ -232,22 +240,44 @@ export default function LiveVoiceStudioPage() {
     }
   };
 
+  // Paste Guild / Server ID from clipboard
+  const handlePasteGuildId = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const cleaned = text.trim();
+      if (cleaned) {
+        setManualGuildId(cleaned);
+        setGuildInputMode('manual');
+      }
+    } catch {
+      // Clipboard access denied or unavailable
+    }
+  };
+
   // Auto-detect server voice channels
   const handleAutoDetectChannels = async () => {
-    if (!currentWorkspace || !selectedFleetGuildId) return;
+    const rawGuildId =
+      guildInputMode === 'manual' || guildsList.length === 0
+        ? manualGuildId.trim()
+        : selectedFleetGuildId || manualGuildId.trim();
+
+    if (!currentWorkspace || !rawGuildId) {
+      setDetectMsg('Please specify a Discord Server / Guild ID first');
+      return;
+    }
     setIsDetectingChannels(true);
     setDetectMsg(null);
     try {
       const targetGuild = guildsList.find(
-        (g) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId
+        (g) => g.id === rawGuildId || g.guildId === rawGuildId
       );
-      const rawGuildId = targetGuild?.guildId || selectedFleetGuildId;
+      const targetGuildId = targetGuild?.guildId || rawGuildId;
 
       const res = await fetch(`/api/workspaces/${currentWorkspace.id}/guilds/bulk-verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          guildId: rawGuildId,
+          guildId: targetGuildId,
           autoSyncChannels: true,
         }),
       });
@@ -327,9 +357,15 @@ export default function LiveVoiceStudioPage() {
     return () => clearInterval(timer);
   }, [sessionState]);
 
+  // Effective guild ID: manual input or dropdown selection
+  const effectiveGuildId =
+    guildInputMode === 'manual' || guildsList.length === 0
+      ? manualGuildId.trim()
+      : selectedFleetGuildId || manualGuildId.trim();
+
   // Current active guild and channels for Fleet mode
   const currentFleetGuild = guildsList.find(
-    (g) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId
+    (g) => g.id === effectiveGuildId || g.guildId === effectiveGuildId
   );
   const currentFleetVoiceChannels = (currentFleetGuild?.channels || []).filter(
     (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
@@ -369,12 +405,15 @@ export default function LiveVoiceStudioPage() {
     }> = [];
 
     if (routingMode === 'fleet') {
-      if (!currentFleetGuild) {
-        setErrorMsg('Please select a Target Discord Server.');
+      const activeGuildId = effectiveGuildId;
+      const activeChannelId = effectiveChannelId;
+
+      if (!activeGuildId) {
+        setErrorMsg('Please enter or select a Target Discord Server / Guild ID.');
         return;
       }
 
-      if (!effectiveChannelId) {
+      if (!activeChannelId) {
         setErrorMsg('Please enter or select a Target Voice Channel ID.');
         return;
       }
@@ -384,15 +423,19 @@ export default function LiveVoiceStudioPage() {
         return;
       }
 
+      const activeGuildName =
+        currentFleetGuild?.displayName || `Server #${activeGuildId.slice(-4)}`;
+      const activeChannelName = effectiveChannelDisplayName;
+
       targetDestinations = selectedFleetBotIds.map((bId) => {
         const bot = botsList.find((b) => b.id === bId);
         return {
           botId: bId,
           botName: bot?.displayName || 'Discord Bot',
-          guildId: currentFleetGuild.id || currentFleetGuild.guildId,
-          guildName: currentFleetGuild.displayName,
-          channelId: effectiveChannelId,
-          channelName: effectiveChannelDisplayName,
+          guildId: activeGuildId,
+          guildName: activeGuildName,
+          channelId: activeChannelId,
+          channelName: activeChannelName,
         };
       });
     } else {
@@ -732,7 +775,7 @@ export default function LiveVoiceStudioPage() {
               onClick={handleStartSession}
               disabled={
                 routingMode === 'fleet'
-                  ? selectedFleetBotIds.length === 0 || !effectiveChannelId
+                  ? selectedFleetBotIds.length === 0 || !effectiveChannelId || !effectiveGuildId
                   : selectedDestinationIds.length === 0
               }
               className="flex items-center space-x-1.5 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/25 transition disabled:opacity-50"
@@ -939,26 +982,84 @@ export default function LiveVoiceStudioPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* TARGET DISCORD SERVER */}
                   <div>
-                    <label className="block text-xs font-medium text-foreground mb-1 flex items-center gap-1.5">
-                      <Server className="w-3.5 h-3.5 text-primary" />
-                      <span>Target Discord Server</span>
-                    </label>
-                    <select
-                      value={selectedFleetGuildId}
-                      onChange={(e) => handleFleetGuildChange(e.target.value)}
-                      disabled={sessionState === 'streaming' || guildsList.length === 0}
-                      className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
-                    >
-                      {guildsList.length === 0 ? (
-                        <option value="">No Servers Connected</option>
-                      ) : (
-                        guildsList.map((g) => (
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                        <Server className="w-3.5 h-3.5 text-primary" />
+                        <span>Target Discord Server</span>
+                      </label>
+
+                      {/* Mode toggle */}
+                      <div className="flex items-center space-x-1">
+                        <button
+                          type="button"
+                          onClick={() => setGuildInputMode('manual')}
+                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                            guildInputMode === 'manual'
+                              ? 'bg-primary text-primary-foreground font-bold'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Manual ID
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGuildInputMode('dropdown')}
+                          disabled={guildsList.length === 0}
+                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                            guildInputMode === 'dropdown'
+                              ? 'bg-primary text-primary-foreground font-bold'
+                              : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
+                          }`}
+                        >
+                          List ({guildsList.length})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* MANUAL GUILD ID OR DROPDOWN */}
+                    {guildInputMode === 'manual' || guildsList.length === 0 ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center space-x-1.5">
+                          <input
+                            type="text"
+                            placeholder="Paste Discord Server / Guild ID..."
+                            value={manualGuildId}
+                            onChange={(e) => setManualGuildId(e.target.value)}
+                            disabled={sessionState === 'streaming'}
+                            className="flex-1 bg-secondary/80 border border-primary/50 focus:border-primary rounded-lg px-3 py-2 text-foreground font-mono outline-none text-xs shadow-inner"
+                          />
+                          <button
+                            type="button"
+                            onClick={handlePasteGuildId}
+                            disabled={sessionState === 'streaming'}
+                            title="Paste Server ID from clipboard"
+                            className="px-2.5 py-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold flex items-center gap-1"
+                          >
+                            <Clipboard className="w-3.5 h-3.5" />
+                            <span>Paste</span>
+                          </button>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground px-0.5">
+                          Right-click server in Discord &gt; &quot;Copy Server ID&quot;
+                        </div>
+                      </div>
+                    ) : (
+                      <select
+                        value={selectedFleetGuildId}
+                        onChange={(e) => {
+                          handleFleetGuildChange(e.target.value);
+                          setManualGuildId(e.target.value);
+                        }}
+                        disabled={sessionState === 'streaming' || guildsList.length === 0}
+                        className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
+                      >
+                        {guildsList.map((g) => (
                           <option key={g.id || g.guildId} value={g.id || g.guildId}>
                             {g.displayName}
                           </option>
-                        ))
-                      )}
-                    </select>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
                   {/* TARGET VOICE CHANNEL (DROPDOWN OR MANUAL CHANNEL ID) */}
