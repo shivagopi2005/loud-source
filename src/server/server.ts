@@ -12,7 +12,7 @@ async function bootstrap() {
   console.log(`[Bootstrap] Starting Multi-Bot Voice Studio (Node.js ${process.version})...`);
 
   // 1. Prepare Next.js app
-  const app = next({ dev, hostname, port });
+  const app = next({ dev, hostname, port, dir: process.cwd() });
   const handle = app.getRequestHandler();
   await app.prepare();
 
