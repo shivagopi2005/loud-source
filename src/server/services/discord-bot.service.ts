@@ -41,7 +41,23 @@ export interface SendMessageResult {
 
 export class DiscordBotService {
   /**
-   * Verify Discord Bot Token and match with Application ID.
+   * Extract Discord Application ID from bot token first base64 segment if possible.
+   */
+  static extractApplicationIdFromToken(token: string): string | null {
+    if (!token || typeof token !== 'string') return null;
+    try {
+      const firstSegment = token.trim().split('.')[0];
+      if (!firstSegment) return null;
+      const decoded = Buffer.from(firstSegment, 'base64').toString('utf8');
+      if (/^\d{17,20}$/.test(decoded)) {
+        return decoded;
+      }
+    } catch {}
+    return null;
+  }
+
+  /**
+   * Verify Discord Bot Token and match/resolve Application ID.
    * Never stores or returns token in responses.
    */
   static async verifyBotToken(
@@ -52,12 +68,19 @@ export class DiscordBotService {
       throw new Error('Bot token is required');
     }
 
+    const trimmed = token.trim();
+
     // Check for simulated/test bot mode for unit tests and local dev
-    if (token.startsWith('mock_') || token.startsWith('test_')) {
-      const mockId = expectedAppId || '987654321098765432';
+    if (
+      trimmed.startsWith('mock_') ||
+      trimmed.startsWith('test_') ||
+      trimmed.includes('.test_') ||
+      trimmed.includes('.mock_')
+    ) {
+      const mockId = expectedAppId || this.extractApplicationIdFromToken(trimmed) || '987654321098765432';
       return {
         id: mockId,
-        username: token.startsWith('mock_') ? 'Studio Voice Bot' : 'Fleet Test Bot',
+        username: trimmed.includes('mock_') ? 'Studio Voice Bot' : 'Fleet Test Bot',
         discriminator: '0001',
         avatar: null,
         bot: true,
@@ -66,7 +89,7 @@ export class DiscordBotService {
     }
 
     try {
-      const rest = new REST({ version: '10' }).setToken(token);
+      const rest = new REST({ version: '10' }).setToken(trimmed);
       const user = (await rest.get(Routes.user('@me'))) as {
         id: string;
         username: string;
@@ -76,25 +99,28 @@ export class DiscordBotService {
       };
 
       if (!user.bot) {
-        throw new Error('Provided token belongs to a user account, not a bot application');
+        throw new Error('Provided token belongs to a user account, not an official bot application');
       }
 
-      // Check application ID match if supplied
-      if (expectedAppId && expectedAppId !== user.id) {
-        // In Discord, bot user ID often equals or matches application ID
-        // Retrieve application info to confirm
-        try {
-          const app = (await rest.get(Routes.oauth2CurrentApplication())) as { id: string };
-          if (app.id !== expectedAppId) {
-            throw new Error(`Application ID mismatch: expected ${expectedAppId}, found ${app.id}`);
-          }
-        } catch {
-          // If oauth2 info fails, check id
-          if (expectedAppId !== user.id) {
-            throw new Error('Application ID does not match bot credentials');
-          }
+      // Try fetching application info to get exact application ID
+      let resolvedAppId = expectedAppId;
+      try {
+        const app = (await rest.get(Routes.oauth2CurrentApplication())) as { id: string };
+        if (app?.id) {
+          resolvedAppId = app.id;
+        }
+      } catch {
+        // Fallback to user ID or decoded token segment
+        if (!resolvedAppId) {
+          resolvedAppId = this.extractApplicationIdFromToken(trimmed) || user.id;
         }
       }
+
+      if (expectedAppId && resolvedAppId && expectedAppId !== resolvedAppId) {
+        throw new Error(`Application ID mismatch: expected ${expectedAppId}, found ${resolvedAppId}`);
+      }
+
+      const finalAppId = resolvedAppId || this.extractApplicationIdFromToken(trimmed) || user.id;
 
       return {
         id: user.id,
@@ -102,7 +128,7 @@ export class DiscordBotService {
         discriminator: user.discriminator,
         avatar: user.avatar,
         bot: true,
-        applicationId: expectedAppId || user.id,
+        applicationId: finalAppId,
       };
     } catch (err: any) {
       if (err.status === 401) {

@@ -9,9 +9,9 @@ import { AuditService } from '@/server/services/audit.service';
 import { realtimeBroadcaster } from '@/server/realtime/events';
 
 const RegisterBotSchema = z.object({
-  displayName: z.string().min(2).max(64),
-  applicationId: z.string().regex(/^\d{17,20}$/, 'Invalid Discord Application ID format'),
-  botToken: z.string().min(20, 'Discord bot token is required'),
+  displayName: z.string().min(1).max(64).optional(),
+  applicationId: z.string().regex(/^\d{17,20}$/, 'Invalid Discord Application ID format').optional(),
+  botToken: z.string().min(10, 'Discord bot token is required'),
   tags: z.array(z.string()).default([]),
   operationalRole: z.string().default('voice_operator'),
   groupId: z.string().optional(),
@@ -100,7 +100,7 @@ export async function POST(
     const body = await request.json();
     const data = RegisterBotSchema.parse(body);
 
-    // 1. Verify Bot Token with Discord REST API
+    // 1. Verify Bot Token with Discord REST API & auto-resolve Application ID / Bot Name
     let verifiedIdentity;
     try {
       verifiedIdentity = await DiscordBotService.verifyBotToken(
@@ -115,16 +115,66 @@ export async function POST(
       );
     }
 
+    const resolvedAppId = data.applicationId || verifiedIdentity.applicationId;
+    const resolvedName =
+      data.displayName?.trim() || verifiedIdentity.username || `Bot-${resolvedAppId.slice(-4)}`;
+
     // 2. Encrypt token using AES-256-GCM
     const encryptedSecretReference = encryptSecret(data.botToken);
 
-    // 3. Create Bot Record & Credential Record in Transaction
+    // 3. Upsert Bot Record & Credential Record in Transaction
     const bot = await prisma.$transaction(async (tx) => {
+      let existingBot = await tx.botApplication.findUnique({
+        where: {
+          workspace_id_application_id: {
+            workspace_id: workspaceId,
+            application_id: resolvedAppId,
+          },
+        },
+      });
+
+      if (existingBot) {
+        existingBot = await tx.botApplication.update({
+          where: { id: existingBot.id },
+          data: {
+            display_name: resolvedName,
+            verified_bot_user_id: verifiedIdentity.id,
+            status: 'ready',
+            tags: data.tags.length > 0 ? data.tags : existingBot.tags,
+            operational_role: data.operationalRole || existingBot.operational_role,
+            last_health_check_at: new Date(),
+          },
+        });
+
+        // Add new active credential version
+        const latestCred = await tx.botCredential.findFirst({
+          where: { bot_id: existingBot.id },
+          orderBy: { credential_version: 'desc' },
+        });
+        const nextVersion = (latestCred?.credential_version || 1) + 1;
+
+        await tx.botCredential.updateMany({
+          where: { bot_id: existingBot.id, status: 'active' },
+          data: { status: 'rotated', rotated_at: new Date() },
+        });
+
+        await tx.botCredential.create({
+          data: {
+            bot_id: existingBot.id,
+            secret_reference: encryptedSecretReference,
+            credential_version: nextVersion,
+            status: 'active',
+          },
+        });
+
+        return existingBot;
+      }
+
       const newBot = await tx.botApplication.create({
         data: {
           workspace_id: workspaceId,
-          application_id: data.applicationId,
-          display_name: data.displayName,
+          application_id: resolvedAppId,
+          display_name: resolvedName,
           verified_bot_user_id: verifiedIdentity.id,
           status: 'ready',
           tags: data.tags,

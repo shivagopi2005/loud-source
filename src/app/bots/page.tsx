@@ -15,6 +15,9 @@ import {
   RotateCw,
   Sliders,
   X,
+  Layers,
+  Sparkles,
+  Check,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 
@@ -29,14 +32,36 @@ function BotFleetContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
 
-  // Form state for Add Bot
+  // Registration Modal Mode: 'single' | 'bulk'
+  const [registerMode, setRegisterMode] = useState<'single' | 'bulk'>('single');
+
+  // Single Bot Form State
   const [formData, setFormData] = useState({
-    displayName: '',
-    applicationId: '',
     botToken: '',
+    applicationId: '',
+    displayName: '',
     operationalRole: 'voice_operator',
     tags: 'voice, studio',
   });
+  const [isResolvingToken, setIsResolvingToken] = useState(false);
+  const [tokenResolvedBot, setTokenResolvedBot] = useState<{
+    username: string;
+    applicationId: string;
+    avatarUrl: string | null;
+  } | null>(null);
+
+  // Bulk Bot Form State
+  const [bulkTokensInput, setBulkTokensInput] = useState('');
+  const [bulkRole, setBulkRole] = useState('voice_operator');
+  const [bulkTags, setBulkTags] = useState('voice, fleet');
+  const [bulkResult, setBulkResult] = useState<{
+    totalSubmitted: number;
+    successful: number;
+    failed: number;
+    addedBots: any[];
+    errors: any[];
+  } | null>(null);
+
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -66,7 +91,66 @@ function BotFleetContent() {
     loadBots();
   }, [currentWorkspace]);
 
-  const handleRegisterBot = async (e: React.FormEvent) => {
+  // Client-side quick decode of Discord Application ID from Token
+  const tryClientDecodeAppId = (token: string): string | null => {
+    try {
+      const segment = token.trim().split('.')[0];
+      if (!segment) return null;
+      const decoded = atob(segment);
+      if (/^\d{17,20}$/.test(decoded)) {
+        return decoded;
+      }
+    } catch {}
+    return null;
+  };
+
+  // Auto-resolve bot info when token changes
+  const handleTokenChange = async (token: string) => {
+    const trimmed = token.trim();
+    setFormData((prev) => {
+      const decodedAppId = tryClientDecodeAppId(trimmed);
+      return {
+        ...prev,
+        botToken: token,
+        applicationId: decodedAppId || prev.applicationId,
+      };
+    });
+
+    if (trimmed.length > 25) {
+      setIsResolvingToken(true);
+      try {
+        const res = await fetch('/api/bots/resolve-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: trimmed }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data) {
+            setTokenResolvedBot({
+              username: json.data.username,
+              applicationId: json.data.applicationId,
+              avatarUrl: json.data.avatarUrl,
+            });
+            setFormData((prev) => ({
+              ...prev,
+              applicationId: json.data.applicationId,
+              displayName: prev.displayName || json.data.username,
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('Could not auto-resolve bot token:', err);
+      } finally {
+        setIsResolvingToken(false);
+      }
+    } else {
+      setTokenResolvedBot(null);
+    }
+  };
+
+  // Submit Single Bot
+  const handleRegisterSingleBot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentWorkspace) return;
     setFormError(null);
@@ -77,9 +161,9 @@ function BotFleetContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          displayName: formData.displayName,
-          applicationId: formData.applicationId.trim(),
           botToken: formData.botToken.trim(),
+          applicationId: formData.applicationId.trim() || undefined,
+          displayName: formData.displayName.trim() || undefined,
           operationalRole: formData.operationalRole,
           tags: formData.tags.split(',').map((t) => t.trim()).filter(Boolean),
         }),
@@ -92,12 +176,46 @@ function BotFleetContent() {
 
       setIsRegisterOpen(false);
       setFormData({
-        displayName: '',
-        applicationId: '',
         botToken: '',
+        applicationId: '',
+        displayName: '',
         operationalRole: 'voice_operator',
         tags: 'voice, studio',
       });
+      setTokenResolvedBot(null);
+      await loadBots();
+    } catch (err: any) {
+      setFormError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Submit Bulk Bots
+  const handleRegisterBulkBots = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentWorkspace || !bulkTokensInput.trim()) return;
+    setFormError(null);
+    setBulkResult(null);
+    setIsSubmitting(true);
+
+    try {
+      const res = await fetch(`/api/workspaces/${currentWorkspace.id}/bots/bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokens: bulkTokensInput,
+          operationalRole: bulkRole,
+          tags: bulkTags.split(',').map((t) => t.trim()).filter(Boolean),
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error?.message || 'Bulk bot import failed');
+      }
+
+      setBulkResult(json.data);
       await loadBots();
     } catch (err: any) {
       setFormError(err.message);
@@ -130,6 +248,11 @@ function BotFleetContent() {
     return matchesSearch && matchesStatus;
   });
 
+  const parsedBulkTokenCount = bulkTokensInput
+    .split(/[\r\n,]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 5).length;
+
   return (
     <div className="space-y-6">
       {/* HEADER */}
@@ -141,13 +264,28 @@ function BotFleetContent() {
           </p>
         </div>
 
-        <button
-          onClick={() => setIsRegisterOpen(true)}
-          className="flex items-center space-x-2 px-3.5 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-md transition"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Official Bot</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => {
+              setRegisterMode('bulk');
+              setIsRegisterOpen(true);
+            }}
+            className="flex items-center space-x-1.5 px-3 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground font-semibold text-xs border border-border shadow-sm transition"
+          >
+            <Layers className="w-4 h-4 text-primary" />
+            <span>Bulk Add Tokens</span>
+          </button>
+          <button
+            onClick={() => {
+              setRegisterMode('single');
+              setIsRegisterOpen(true);
+            }}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-md transition"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Single Bot</span>
+          </button>
+        </div>
       </div>
 
       {/* FILTER & SEARCH BAR */}
@@ -187,7 +325,9 @@ function BotFleetContent() {
             <Bot className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
             <h3 className="text-sm font-semibold text-foreground">No Discord bots found</h3>
             <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-              {search ? 'Try modifying your search query or filter.' : 'Register your first Discord bot token to enable live voice streaming and fleet controls.'}
+              {search
+                ? 'Try modifying your search query or filter.'
+                : 'Register your Discord bot tokens individually or using bulk import to enable live voice streaming.'}
             </p>
           </div>
         ) : (
@@ -227,7 +367,9 @@ function BotFleetContent() {
                 <div className="mt-4 space-y-2 text-xs text-muted-foreground">
                   <div className="flex items-center justify-between">
                     <span>Role:</span>
-                    <span className="font-medium text-foreground capitalize">{bot.operationalRole?.replace('_', ' ')}</span>
+                    <span className="font-medium text-foreground capitalize">
+                      {bot.operationalRole?.replace('_', ' ')}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Credentials:</span>
@@ -276,24 +418,62 @@ function BotFleetContent() {
         )}
       </div>
 
-      {/* ADD BOT MODAL DIALOG */}
+      {/* REGISTER BOT MODAL (SINGLE OR BULK) */}
       {isRegisterOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-card border border-border rounded-xl shadow-2xl max-w-lg w-full p-6 relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-card border border-border rounded-xl shadow-2xl max-w-lg w-full p-6 relative my-8">
             <button
-              onClick={() => setIsRegisterOpen(false)}
+              onClick={() => {
+                setIsRegisterOpen(false);
+                setBulkResult(null);
+              }}
               className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center space-x-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary">
-                <Bot className="w-5 h-5" />
+            {/* Modal Header & Tabs */}
+            <div className="mb-5 space-y-3">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary">
+                  <Bot className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-foreground">Register Official Discord Bots</h2>
+                  <p className="text-xs text-muted-foreground">Tokens are encrypted at rest with AES-256-GCM.</p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-base font-bold text-foreground">Register Official Discord Bot</h2>
-                <p className="text-xs text-muted-foreground">Tokens are encrypted at rest with AES-256-GCM.</p>
+
+              {/* Tabs */}
+              <div className="flex items-center space-x-1 bg-secondary/60 p-1 rounded-lg border border-border">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegisterMode('single');
+                    setFormError(null);
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition ${
+                    registerMode === 'single'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Single Bot (Auto-Detect App ID)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegisterMode('bulk');
+                    setFormError(null);
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition ${
+                    registerMode === 'bulk'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Bulk Add Tokens
+                </button>
               </div>
             </div>
 
@@ -304,88 +484,253 @@ function BotFleetContent() {
               </div>
             )}
 
-            <form onSubmit={handleRegisterBot} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-medium text-foreground mb-1">Friendly Bot Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g., Studio Alpha Voice Bot"
-                  value={formData.displayName}
-                  onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-                  className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-foreground mb-1">Discord Application ID</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g., 1204489001894273058"
-                  value={formData.applicationId}
-                  onChange={(e) => setFormData({ ...formData, applicationId: e.target.value })}
-                  className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground font-mono outline-none focus:border-primary"
-                />
-                <span className="text-[11px] text-muted-foreground">Found in Discord Developer Portal &gt; General Information</span>
-              </div>
-
-              <div>
-                <label className="block font-medium text-foreground mb-1">Discord Bot Token (Secret)</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Paste official bot token or 'mock_test_token' for simulator..."
-                  value={formData.botToken}
-                  onChange={(e) => setFormData({ ...formData, botToken: e.target.value })}
-                  className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground font-mono outline-none focus:border-primary"
-                />
-                <span className="text-[11px] text-muted-foreground">Verified against Discord API upon submission. Never logged or exposed.</span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            {/* SINGLE BOT TAB */}
+            {registerMode === 'single' && (
+              <form onSubmit={handleRegisterSingleBot} className="space-y-4 text-xs">
+                {/* Token Input is First */}
                 <div>
-                  <label className="block font-medium text-foreground mb-1">Operational Role</label>
-                  <select
-                    value={formData.operationalRole}
-                    onChange={(e) => setFormData({ ...formData, operationalRole: e.target.value })}
-                    className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none"
-                  >
-                    <option value="voice_operator">Voice Operator</option>
-                    <option value="announcer">Announcer</option>
-                    <option value="test_runner">Test Runner</option>
-                    <option value="general_operator">General Fleet Bot</option>
-                  </select>
+                  <label className="block font-medium text-foreground mb-1">
+                    Discord Bot Token (Secret) <span className="text-destructive">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Paste bot token here (Application ID will auto-detect)..."
+                    value={formData.botToken}
+                    onChange={(e) => handleTokenChange(e.target.value)}
+                    className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground font-mono outline-none focus:border-primary"
+                  />
+                  <span className="text-[11px] text-muted-foreground mt-0.5 block">
+                    Pasting your token will instantly collect the Application ID and verify identity with Discord.
+                  </span>
                 </div>
 
+                {/* Auto-resolved feedback card */}
+                {tokenResolvedBot && (
+                  <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center space-x-3 text-xs">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <div>
+                      <div className="font-bold text-foreground">
+                        Verified Discord Bot: <span className="text-emerald-400">{tokenResolvedBot.username}</span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground font-mono">
+                        Auto-collected Application ID: {tokenResolvedBot.applicationId}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Discord Application ID (Auto-populated or optional) */}
                 <div>
-                  <label className="block font-medium text-foreground mb-1">Tags (Comma-separated)</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-medium text-foreground">
+                      Discord Application ID <span className="text-muted-foreground font-normal">(Auto-collected from token)</span>
+                    </label>
+                    {isResolvingToken && (
+                      <span className="text-[10px] text-primary flex items-center gap-1 animate-pulse">
+                        <Sparkles className="w-3 h-3" /> Auto-detecting...
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
-                    value={formData.tags}
-                    onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-                    className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none"
+                    placeholder="Auto-detected from token, or enter manually..."
+                    value={formData.applicationId}
+                    onChange={(e) => setFormData({ ...formData, applicationId: e.target.value })}
+                    className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground font-mono outline-none focus:border-primary"
                   />
                 </div>
-              </div>
 
-              <div className="pt-4 border-t border-border flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsRegisterOpen(false)}
-                  className="px-4 py-2 rounded-lg bg-secondary text-foreground hover:bg-secondary/80 font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Verifying with Discord...' : 'Verify & Save Bot'}
-                </button>
-              </div>
-            </form>
+                {/* Friendly Bot Name (Optional, auto-defaults to Discord username) */}
+                <div>
+                  <label className="block font-medium text-foreground mb-1">
+                    Friendly Bot Name <span className="text-muted-foreground font-normal">(Optional, defaults to Discord name)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Studio Alpha Voice Bot"
+                    value={formData.displayName}
+                    onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+                    className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-medium text-foreground mb-1">Operational Role</label>
+                    <select
+                      value={formData.operationalRole}
+                      onChange={(e) => setFormData({ ...formData, operationalRole: e.target.value })}
+                      className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none"
+                    >
+                      <option value="voice_operator">Voice Operator</option>
+                      <option value="announcer">Announcer</option>
+                      <option value="test_runner">Test Runner</option>
+                      <option value="general_operator">General Fleet Bot</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-foreground mb-1">Tags (Comma-separated)</label>
+                    <input
+                      type="text"
+                      value={formData.tags}
+                      onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                      className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-border flex justify-end space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsRegisterOpen(false)}
+                    className="px-4 py-2 rounded-lg bg-secondary text-foreground hover:bg-secondary/80 font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || !formData.botToken}
+                    className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {isSubmitting ? 'Verifying with Discord...' : 'Verify & Save Bot'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* BULK ADD BOTS TAB */}
+            {registerMode === 'bulk' && (
+              <form onSubmit={handleRegisterBulkBots} className="space-y-4 text-xs">
+                {bulkResult ? (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-1">
+                      <div className="text-sm font-bold text-foreground flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>Bulk Import Completed</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        <strong className="text-emerald-400">{bulkResult.successful}</strong> bots successfully verified &amp; registered.
+                        {bulkResult.failed > 0 && (
+                          <span className="text-destructive ml-2">
+                            ({bulkResult.failed} failed)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Successfully Added Bots List */}
+                    {bulkResult.addedBots.length > 0 && (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto p-2 bg-secondary/40 rounded-lg border border-border">
+                        <span className="font-semibold text-foreground text-[11px]">Registered Bots:</span>
+                        {bulkResult.addedBots.map((b) => (
+                          <div key={b.id} className="p-2 rounded bg-card flex items-center justify-between text-xs">
+                            <span className="font-medium text-foreground">{b.displayName}</span>
+                            <span className="font-mono text-muted-foreground text-[11px]">{b.applicationId}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Errors List */}
+                    {bulkResult.errors.length > 0 && (
+                      <div className="space-y-1.5 max-h-36 overflow-y-auto p-2 bg-destructive/10 rounded-lg border border-destructive/20 text-destructive text-[11px]">
+                        <span className="font-semibold">Failed Tokens:</span>
+                        {bulkResult.errors.map((err, idx) => (
+                          <div key={idx}>
+                            Token #{err.tokenIndex} ({err.maskedToken}): {err.error}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsRegisterOpen(false);
+                          setBulkResult(null);
+                          setBulkTokensInput('');
+                        }}
+                        className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="font-medium text-foreground">
+                          Paste Discord Bot Tokens (One Per Line)
+                        </label>
+                        <span className="text-primary font-mono text-[11px] font-semibold">
+                          {parsedBulkTokenCount} token{parsedBulkTokenCount === 1 ? '' : 's'} detected
+                        </span>
+                      </div>
+                      <textarea
+                        rows={6}
+                        required
+                        placeholder={`Paste multiple bot tokens here (one per line)...\nOTk0MDAwMDAwMDAwMDAwMDAx.Gz...xyz\nOTk0MDAwMDAwMDAwMDAwMDAy.Gx...abc`}
+                        value={bulkTokensInput}
+                        onChange={(e) => setBulkTokensInput(e.target.value)}
+                        className="w-full bg-secondary/60 border border-border rounded-lg p-3 text-foreground font-mono outline-none focus:border-primary resize-none text-xs"
+                      />
+                      <span className="text-[11px] text-muted-foreground">
+                        Each token will be independently verified against Discord, auto-collecting its Application ID and bot username.
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-medium text-foreground mb-1">Operational Role</label>
+                        <select
+                          value={bulkRole}
+                          onChange={(e) => setBulkRole(e.target.value)}
+                          className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none"
+                        >
+                          <option value="voice_operator">Voice Operator</option>
+                          <option value="announcer">Announcer</option>
+                          <option value="test_runner">Test Runner</option>
+                          <option value="general_operator">General Fleet Bot</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block font-medium text-foreground mb-1">Tags</label>
+                        <input
+                          type="text"
+                          value={bulkTags}
+                          onChange={(e) => setBulkTags(e.target.value)}
+                          className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-border flex justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsRegisterOpen(false)}
+                        className="px-4 py-2 rounded-lg bg-secondary text-foreground hover:bg-secondary/80 font-medium"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmitting || parsedBulkTokenCount === 0}
+                        className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        {isSubmitting
+                          ? `Verifying & Importing ${parsedBulkTokenCount} Bots...`
+                          : `Import & Verify All (${parsedBulkTokenCount})`}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -400,4 +745,3 @@ export default function BotFleetPage() {
     </Suspense>
   );
 }
-
