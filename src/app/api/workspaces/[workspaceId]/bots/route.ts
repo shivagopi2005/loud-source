@@ -55,14 +55,19 @@ export async function GET(
       orderBy: { created_at: 'desc' },
     });
 
+    const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
+
     return okResponse(
-      bots.map((b) => ({
-        id: b.id,
-        applicationId: b.application_id,
-        displayName: b.display_name,
-        verifiedBotUserId: b.verified_bot_user_id,
-        status: b.status,
-        lastHealthCheckAt: b.last_health_check_at,
+      bots.map((b) => {
+        const isOnline = FleetGatewayService.isBotOnline(b.id) || b.status === 'connected';
+        return {
+          id: b.id,
+          applicationId: b.application_id,
+          displayName: b.display_name,
+          verifiedBotUserId: b.verified_bot_user_id,
+          status: isOnline ? 'connected' : b.status,
+          online: isOnline,
+          lastHealthCheckAt: b.last_health_check_at,
         tags: b.tags,
         operationalRole: b.operational_role,
         createdAt: b.created_at,
@@ -83,8 +88,9 @@ export async function GET(
           id: gm.group.id,
           name: gm.group.name,
         })),
-      }))
-    );
+      };
+    })
+  );
   } catch (err) {
     return handleApiError(err);
   }
@@ -204,7 +210,15 @@ export async function POST(
       return newBot;
     });
 
-    // 4. Record Audit Log (Notice: token is NOT included)
+    // 4. Connect bot to Discord Gateway immediately so it appears ONLINE in Discord
+    try {
+      const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
+      await FleetGatewayService.connectBot(bot.id, data.botToken);
+    } catch (gwErr) {
+      console.warn('[RegisterBot] Immediate Gateway connect warning:', gwErr);
+    }
+
+    // 5. Record Audit Log (Notice: token is NOT included)
     await AuditService.record({
       workspaceId,
       actorUserId: user.userId,

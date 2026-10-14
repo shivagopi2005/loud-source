@@ -58,6 +58,14 @@ async function bootstrap() {
   } catch (err: any) {
     console.warn('[Workers] Worker startup warning:', err.message);
   }
+
+  // 5. Connect all ready bots to Discord Gateway (brings bots ONLINE)
+  try {
+    const { FleetGatewayService } = await import('./services/fleet-gateway.service');
+    await FleetGatewayService.autoConnectAll();
+  } catch (err: any) {
+    console.warn('[FleetGateway] Auto-connect startup warning:', err.message);
+  }
 }
 
 bootstrap().catch((err) => {

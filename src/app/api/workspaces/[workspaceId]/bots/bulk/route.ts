@@ -144,11 +144,19 @@ export async function POST(
           return newBot;
         });
 
+        // Connect bot to Discord Gateway immediately so it appears ONLINE in Discord
+        try {
+          const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
+          FleetGatewayService.connectBot(bot.id, token).catch((e) => {
+            console.warn(`[BulkRegister] Gateway connect warning for ${bot.display_name}:`, e.message);
+          });
+        } catch {}
+
         addedBots.push({
           id: bot.id,
           applicationId: bot.application_id,
           displayName: bot.display_name,
-          status: bot.status,
+          status: 'connected',
           maskedToken: maskToken(token),
         });
       } catch (err: any) {
