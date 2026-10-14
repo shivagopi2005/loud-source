@@ -160,17 +160,24 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      const rawChannelId = dest.channelConfigId.trim();
+
+      if (rawGuildId === rawChannelId) {
+        throw new Error(
+          `Target Server ID and Voice Channel ID cannot be identical (${rawGuildId}). Please enter your voice channel ID (e.g. 1499406518313947284) in the channel field.`
+        );
+      }
+
       // Look up channel by UUID or Discord snowflake ID
       let channel = await prisma.channelConfig.findFirst({
         where: {
           guild_connection_id: guild.id,
-          OR: [{ id: dest.channelConfigId }, { channel_id: dest.channelConfigId }],
+          OR: [{ id: rawChannelId }, { channel_id: rawChannelId }],
         },
       });
 
       // If channel is not yet registered, auto-configure it on the fly so manual channel IDs always work!
       if (!channel) {
-        const rawChannelId = dest.channelConfigId.trim();
         channel = await prisma.channelConfig.upsert({
           where: {
             guild_connection_id_channel_id: {

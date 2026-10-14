@@ -414,6 +414,11 @@ export default function LiveVoiceStudioPage() {
         return;
       }
 
+      if (activeGuildId === activeChannelId) {
+        setErrorMsg('Target Server ID and Voice Channel ID cannot be the same! Target Server ID is your Guild ID (e.g. 1499406517470756955), and Target Voice Channel ID must be the Voice Channel ID (e.g. 1499406518313947284).');
+        return;
+      }
+
       if (selectedFleetBotIds.length === 0) {
         setErrorMsg('Please select at least one Discord Bot to connect.');
         return;
@@ -1130,6 +1135,39 @@ export default function LiveVoiceStudioPage() {
                           <span>Right-click voice channel in Discord &gt; &quot;Copy Channel ID&quot;</span>
                           {detectMsg && <span className="text-emerald-400 font-semibold">{detectMsg}</span>}
                         </div>
+
+                        {/* Quick Channel Picker from detected/synced server */}
+                        {currentFleetVoiceChannels.length > 0 && (
+                          <div className="pt-1.5 space-y-1">
+                            <span className="text-[10px] text-muted-foreground block font-medium">
+                              Quick Pick Channel from {currentFleetGuild?.displayName || 'Server'}:
+                            </span>
+                            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-1">
+                              {currentFleetVoiceChannels.map((ch: any) => {
+                                const chId = ch.channelId || ch.id;
+                                const isSelected = manualChannelId === chId || selectedFleetChannelId === chId;
+                                return (
+                                  <button
+                                    key={chId}
+                                    type="button"
+                                    onClick={() => {
+                                      setManualChannelId(chId);
+                                      setSelectedFleetChannelId(chId);
+                                    }}
+                                    className={`text-[10px] px-2 py-0.5 rounded border transition flex items-center gap-1 ${
+                                      isSelected
+                                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold'
+                                        : 'bg-secondary/70 border-border text-foreground hover:bg-secondary'
+                                    }`}
+                                  >
+                                    <span>🔊</span>
+                                    <span>{ch.name}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       /* DROPDOWN MODE */
