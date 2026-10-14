@@ -1,0 +1,369 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 15.1 Users
+model User {
+  id               String            @id @default(uuid())
+  discord_id       String            @unique
+  username         String
+  avatar_url       String?
+  status           String            @default("active") // active, suspended, deleted
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+  deleted_at       DateTime?
+
+  workspaces_owned Workspace[]       @relation("WorkspaceOwner")
+  memberships      WorkspaceMember[]
+  voice_sessions   VoiceSession[]    @relation("UserVoiceSessions")
+  message_jobs     MessageJob[]      @relation("UserMessageJobs")
+  scheduled_jobs   ScheduledJob[]    @relation("UserScheduledJobs")
+  audit_events     AuditEvent[]      @relation("UserAuditEvents")
+  support_reports  SupportReport[]   @relation("UserSupportReports")
+
+  @@map("users")
+}
+
+// 15.2 Workspaces
+model Workspace {
+  id            String             @id @default(uuid())
+  owner_user_id String
+  name          String
+  plan_id       String             @default("free") // free, pro, enterprise
+  status        String             @default("active") // active, restricted, suspended
+  created_at    DateTime           @default(now())
+  updated_at    DateTime           @updatedAt
+
+  owner         User               @relation("WorkspaceOwner", fields: [owner_user_id], references: [id], onDelete: Cascade)
+  members       WorkspaceMember[]
+  bots          BotApplication[]
+  guilds        GuildConnection[]
+  channels      ChannelConfig[]
+  groups        BotGroup[]
+  voice_sessions VoiceSession[]
+  message_jobs  MessageJob[]
+  scheduled_jobs ScheduledJob[]
+  audit_events  AuditEvent[]
+  usage_records UsageRecord[]
+  subscriptions Subscription[]
+  support_reports SupportReport[]
+
+  @@map("workspaces")
+}
+
+// 15.3 Workspace Members
+model WorkspaceMember {
+  id           String    @id @default(uuid())
+  workspace_id String
+  user_id      String
+  role         String    @default("operator") // owner, administrator, operator, viewer, platform_admin
+  created_at   DateTime  @default(now())
+
+  workspace    Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, user_id])
+  @@map("workspace_members")
+}
+
+// 15.4 Bot Applications
+model BotApplication {
+  id                   String            @id @default(uuid())
+  workspace_id         String
+  application_id       String
+  display_name         String
+  verified_bot_user_id String?
+  status               String            @default("registered") // registered, verifying, ready, connecting, connected, degraded, disconnected, credential_invalid, disabled, removed
+  last_health_check_at DateTime?
+  tags                 String[]          @default([])
+  operational_role     String?           @default("voice_operator")
+  created_at           DateTime          @default(now())
+  updated_at           DateTime          @updatedAt
+
+  workspace            Workspace         @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  credentials          BotCredential[]
+  guild_accesses       BotGuildAccess[]
+  group_memberships    BotGroupMember[]
+  voice_endpoints      VoiceEndpoint[]
+
+  @@unique([workspace_id, application_id])
+  @@index([workspace_id])
+  @@index([status])
+  @@map("bot_applications")
+}
+
+// 15.5 Bot Credentials (encrypted secret store references)
+model BotCredential {
+  id                 String         @id @default(uuid())
+  bot_id             String
+  secret_reference   String         // Encrypted payload: {iv, tag, ciphertext}
+  credential_version Int            @default(1)
+  status             String         @default("active") // active, rotated, revoked
+  created_at         DateTime       @default(now())
+  rotated_at         DateTime?
+  revoked_at         DateTime?
+
+  bot                BotApplication @relation(fields: [bot_id], references: [id], onDelete: Cascade)
+
+  @@index([bot_id])
+  @@map("bot_credentials")
+}
+
+// 15.6 Guild Connections
+model GuildConnection {
+  id                  String           @id @default(uuid())
+  workspace_id        String
+  guild_id            String
+  display_name        String
+  icon_url            String?
+  verification_status String           @default("pending") // pending, verified, failed, uninstalled
+  verified_at         DateTime?
+  created_at          DateTime         @default(now())
+
+  workspace           Workspace        @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  bot_accesses        BotGuildAccess[]
+  channel_configs     ChannelConfig[]
+  voice_endpoints     VoiceEndpoint[]
+
+  @@unique([workspace_id, guild_id])
+  @@index([workspace_id])
+  @@map("guild_connections")
+}
+
+// 15.7 Bot Guild Access
+model BotGuildAccess {
+  id                   String          @id @default(uuid())
+  bot_id               String
+  guild_connection_id  String
+  status               String          @default("active") // active, missing_permissions, left_guild, unknown
+  permissions_snapshot String          @default("0") // Discord Permissions bitfield string
+  last_verified_at     DateTime?
+
+  bot                  BotApplication  @relation(fields: [bot_id], references: [id], onDelete: Cascade)
+  guild                GuildConnection @relation(fields: [guild_connection_id], references: [id], onDelete: Cascade)
+
+  @@unique([bot_id, guild_connection_id])
+  @@index([bot_id])
+  @@index([guild_connection_id])
+  @@map("bot_guild_access")
+}
+
+// 15.8 Channel Configurations
+model ChannelConfig {
+  id                  String          @id @default(uuid())
+  workspace_id        String
+  guild_connection_id String
+  channel_id          String
+  channel_type        Int             @default(2) // 0=GUILD_TEXT, 2=GUILD_VOICE, 5=GUILD_ANNOUNCEMENT, 13=GUILD_STAGE_VOICE
+  purpose             String          @default("voice_streaming") // voice_streaming, text_testing, announcements, notifications, operational_alerts
+  display_name        String
+  status              String          @default("active") // active, disabled, deleted_in_guild, unauthorized
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+
+  workspace           Workspace       @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  guild               GuildConnection @relation(fields: [guild_connection_id], references: [id], onDelete: Cascade)
+  voice_endpoints     VoiceEndpoint[]
+
+  @@unique([guild_connection_id, channel_id])
+  @@index([workspace_id])
+  @@map("channel_configs")
+}
+
+// 15.9 Bot Groups
+model BotGroup {
+  id           String           @id @default(uuid())
+  workspace_id String
+  name         String
+  description  String?
+  created_at   DateTime         @default(now())
+
+  workspace    Workspace        @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  members      BotGroupMember[]
+
+  @@unique([workspace_id, name])
+  @@index([workspace_id])
+  @@map("bot_groups")
+}
+
+// 15.10 Bot Group Members
+model BotGroupMember {
+  group_id String
+  bot_id   String
+
+  group    BotGroup       @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  bot      BotApplication @relation(fields: [bot_id], references: [id], onDelete: Cascade)
+
+  @@id([group_id, bot_id])
+  @@map("bot_group_members")
+}
+
+// 15.11 Voice Sessions
+model VoiceSession {
+  id                  String          @id @default(uuid())
+  workspace_id        String
+  created_by_user_id  String
+  state               String          @default("created") // created, validating, awaiting_user_start, connecting, streaming, paused, degraded, stopping, stopped, failed
+  audio_configuration Json            @default("{}") // sampleRate, channels, gain, filterSettings
+  started_at          DateTime?
+  stopped_at          DateTime?
+  stop_reason         String?         // user_initiated, emergency_stop, timeout, error, worker_crash
+  created_at          DateTime        @default(now())
+
+  workspace           Workspace       @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  created_by          User            @relation("UserVoiceSessions", fields: [created_by_user_id], references: [id], onDelete: Cascade)
+  endpoints           VoiceEndpoint[]
+
+  @@index([workspace_id])
+  @@index([state])
+  @@map("voice_sessions")
+}
+
+// 15.12 Voice Endpoints
+model VoiceEndpoint {
+  id                  String          @id @default(uuid())
+  voice_session_id    String
+  bot_id              String
+  guild_connection_id String
+  channel_config_id   String
+  state               String          @default("pending") // pending, connecting, connected, muted, reconnecting, failed, disconnected
+  last_error_code     String?
+  connected_at        DateTime?
+  disconnected_at     DateTime?
+
+  session             VoiceSession    @relation(fields: [voice_session_id], references: [id], onDelete: Cascade)
+  bot                 BotApplication  @relation(fields: [bot_id], references: [id], onDelete: Cascade)
+  guild               GuildConnection @relation(fields: [guild_connection_id], references: [id], onDelete: Cascade)
+  channel             ChannelConfig   @relation(fields: [channel_config_id], references: [id], onDelete: Cascade)
+
+  @@index([voice_session_id])
+  @@index([bot_id])
+  @@map("voice_endpoints")
+}
+
+// 15.13 Message Jobs
+model MessageJob {
+  id                 String     @id @default(uuid())
+  workspace_id       String
+  created_by_user_id String
+  job_type           String     @default("test_message") // test_message, announcement, direct_message_consent
+  destination_id     String     // channel_id or recipient_id
+  idempotency_key    String?
+  state              String     @default("queued") // draft, awaiting_confirmation, queued, sending, sent, failed, cancelled, rate_limited
+  attempt_count      Int        @default(0)
+  result_code        String?
+  payload            Json       @default("{}") // content, embeds, options
+  created_at         DateTime   @default(now())
+  completed_at       DateTime?
+
+  workspace          Workspace  @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  created_by         User       @relation("UserMessageJobs", fields: [created_by_user_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, idempotency_key])
+  @@index([workspace_id])
+  @@index([state])
+  @@map("message_jobs")
+}
+
+// 15.14 Scheduled Jobs
+model ScheduledJob {
+  id                  String     @id @default(uuid())
+  workspace_id        String
+  created_by_user_id  String
+  job_type            String     // periodic_health_check, scheduled_announcement, session_cleanup, quota_audit
+  schedule_definition String     // cron syntax or interval descriptor
+  state               String     @default("active") // active, paused, cancelled, completed
+  next_run_at         DateTime?
+  payload             Json       @default("{}")
+  created_at          DateTime   @default(now())
+  updated_at          DateTime   @updatedAt
+
+  workspace           Workspace  @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  created_by          User       @relation("UserScheduledJobs", fields: [created_by_user_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+  @@index([state])
+  @@map("scheduled_jobs")
+}
+
+// 15.15 Audit Events
+model AuditEvent {
+  id             String    @id @default(uuid())
+  workspace_id   String
+  actor_user_id  String?
+  actor_type     String    @default("user") // user, system, worker, api
+  action         String    // bot.register, bot.rotate_credential, voice.start, voice.emergency_stop, etc.
+  resource_type  String    // bot, guild, channel, voice_session, message_job, member
+  resource_id    String?
+  result         String    @default("success") // success, failure, denied
+  error_code     String?
+  correlation_id String?
+  metadata       Json      @default("{}")
+  created_at     DateTime  @default(now())
+
+  workspace      Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  actor          User?     @relation("UserAuditEvents", fields: [actor_user_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id])
+  @@index([action])
+  @@index([created_at])
+  @@map("audit_events")
+}
+
+// 15.16 Usage Records
+model UsageRecord {
+  id             String    @id @default(uuid())
+  workspace_id   String
+  resource_type  String    // voice_seconds, message_count, bot_count, api_requests
+  quantity       Int       @default(0)
+  recorded_at    DateTime  @default(now())
+  billing_period String    // YYYY-MM
+
+  workspace      Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id, billing_period])
+  @@map("usage_records")
+}
+
+// 15.17 Subscriptions
+model Subscription {
+  id                       String    @id @default(uuid())
+  workspace_id             String
+  provider                 String    @default("stripe")
+  provider_customer_id     String?
+  provider_subscription_id String?
+  plan_id                  String    @default("free") // free, pro, enterprise
+  status                   String    @default("active") // active, trialing, past_due, canceled
+  current_period_end       DateTime?
+  created_at               DateTime  @default(now())
+  updated_at               DateTime  @updatedAt
+
+  workspace                Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+  @@map("subscriptions")
+}
+
+// 15.18 Support Reports
+model SupportReport {
+  id               String    @id @default(uuid())
+  workspace_id     String
+  reporter_user_id String
+  category         String    // voice_failure, bot_auth, billing, abuse, general
+  description      String
+  correlation_id   String?
+  status           String    @default("open") // open, under_review, resolved, closed
+  created_at       DateTime  @default(now())
+  resolved_at      DateTime?
+
+  workspace        Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  reporter         User      @relation("UserSupportReports", fields: [reporter_user_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+  @@map("support_reports")
+}

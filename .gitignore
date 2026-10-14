@@ -1,0 +1,14 @@
+node_modules/
+.next/
+dist/
+out/
+build/
+*.log
+.env
+.env.local
+.env.production
+.DS_Store
+*.pem
+postgres_data/
+redis_data/
+coverage/
