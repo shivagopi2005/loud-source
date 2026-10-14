@@ -119,15 +119,37 @@ export async function POST(request: NextRequest) {
       }
 
       // Look up channel by UUID or Discord snowflake ID
-      const channel = await prisma.channelConfig.findFirst({
+      let channel = await prisma.channelConfig.findFirst({
         where: {
           guild_connection_id: guild.id,
           OR: [{ id: dest.channelConfigId }, { channel_id: dest.channelConfigId }],
         },
       });
 
+      // If channel is not yet registered, auto-configure it on the fly so manual channel IDs always work!
       if (!channel) {
-        throw new Error(`Channel '${dest.channelConfigId}' not found or configured for guild ${guild.display_name}`);
+        const rawChannelId = dest.channelConfigId.trim();
+        channel = await prisma.channelConfig.upsert({
+          where: {
+            guild_connection_id_channel_id: {
+              guild_connection_id: guild.id,
+              channel_id: rawChannelId,
+            },
+          },
+          update: {
+            display_name: `voice-${rawChannelId.slice(-4)}`,
+            status: 'active',
+          },
+          create: {
+            workspace_id: data.workspaceId,
+            guild_connection_id: guild.id,
+            channel_id: rawChannelId,
+            channel_type: 2, // GUILD_VOICE
+            purpose: 'voice_streaming',
+            display_name: `voice-${rawChannelId.slice(-4)}`,
+            status: 'active',
+          },
+        });
       }
 
       const token = decryptSecret(bot.credentials[0].secret_reference);

@@ -49,6 +49,7 @@ export class VoiceWorkerInstance {
   private connection: VoiceConnection | null = null;
   private player: AudioPlayer | null = null;
   private audioStream: PassThrough | null = null;
+  private resource: any | null = null;
   private isMock = false;
 
   constructor(config: VoiceEndpointConfig) {
@@ -105,6 +106,7 @@ export class VoiceWorkerInstance {
         inputType: StreamType.Raw,
         inlineVolume: true,
       });
+      this.resource = resource;
 
       if (resource.volume) {
         resource.volume.setVolume(this.muted ? 0 : this.gain);
@@ -174,10 +176,13 @@ export class VoiceWorkerInstance {
   }
 
   /**
-   * Set output gain (0.0 to 2.0).
+   * Set output gain (0.0 to 10.0 for up to 1000% volume).
    */
   setGain(gain: number): void {
-    this.gain = Math.max(0, Math.min(2.0, gain));
+    this.gain = Math.max(0, Math.min(10.0, gain));
+    if (this.resource?.volume) {
+      this.resource.volume.setVolume(this.muted ? 0 : this.gain);
+    }
   }
 
   /**
@@ -185,6 +190,9 @@ export class VoiceWorkerInstance {
    */
   setMute(mute: boolean): void {
     this.muted = mute;
+    if (this.resource?.volume) {
+      this.resource.volume.setVolume(mute ? 0 : this.gain);
+    }
     if (this.state === 'connected' || this.state === 'muted') {
       this.state = mute ? 'muted' : 'connected';
     }
@@ -196,6 +204,7 @@ export class VoiceWorkerInstance {
   destroy(): void {
     this.state = 'disconnected';
     this.vuLevel = 0;
+    this.resource = null;
 
     if (this.audioStream) {
       try {

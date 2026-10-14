@@ -22,6 +22,9 @@ import {
   Users,
   Check,
   Disc,
+  Flame,
+  Clipboard,
+  Wand2,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 
@@ -68,23 +71,27 @@ export default function LiveVoiceStudioPage() {
   const [guildsList, setGuildsList] = useState<any[]>([]);
   const [botsList, setBotsList] = useState<any[]>([]);
 
-  // Fleet Channel Connector Panel state (Feature: Connect all bots to specific channel & stream)
+  // Fleet Channel Connector Panel state
   const [routingMode, setRoutingMode] = useState<'fleet' | 'custom'>('fleet');
   const [selectedFleetGuildId, setSelectedFleetGuildId] = useState<string>('');
   const [selectedFleetChannelId, setSelectedFleetChannelId] = useState<string>('');
+  const [manualChannelId, setManualChannelId] = useState<string>('');
+  const [channelInputMode, setChannelInputMode] = useState<'dropdown' | 'manual'>('manual');
   const [selectedFleetBotIds, setSelectedFleetBotIds] = useState<string[]>([]);
+  const [isDetectingChannels, setIsDetectingChannels] = useState(false);
+  const [detectMsg, setDetectMsg] = useState<string | null>(null);
 
   // Custom matrix destinations
   const [availableDestinations, setAvailableDestinations] = useState<VoiceDestination[]>([]);
   const [selectedDestinationIds, setSelectedDestinationIds] = useState<string[]>([]);
 
-  // Session state
+  // Session state (Default Master Gain set to 10.0 = 1000% volume for ultra-loud broadcasting)
   const [sessionState, setSessionState] = useState<
     'idle' | 'awaiting_start' | 'connecting' | 'streaming' | 'stopping' | 'stopped'
   >('idle');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [outputCards, setOutputCards] = useState<OutputCardState[]>([]);
-  const [masterGain, setMasterGain] = useState<number>(1.0);
+  const [masterGain, setMasterGain] = useState<number>(10.0); // 1000% volume default
   const [masterMuted, setMasterMuted] = useState<boolean>(false);
   const [sessionDurationSec, setSessionDurationSec] = useState<number>(0);
   const [latencyMs, setLatencyMs] = useState<number>(24);
@@ -96,6 +103,11 @@ export default function LiveVoiceStudioPage() {
   const wsRef = useRef<WebSocket | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const masterGainRef = useRef<number>(10.0);
+
+  useEffect(() => {
+    masterGainRef.current = masterGain;
+  }, [masterGain]);
 
   // Load microphones
   useEffect(() => {
@@ -132,13 +144,13 @@ export default function LiveVoiceStudioPage() {
         const guilds = guildsData.data || [];
         const rawBots = botsData.data || [];
         const readyBots = rawBots.filter(
-          (b: any) => b.status === 'ready' || b.status === 'connected'
+          (b: any) => b.status === 'ready' || b.status === 'connected' || b.online
         );
 
         setGuildsList(guilds);
         setBotsList(readyBots);
 
-        // Auto-select first guild and voice channel for fleet mode
+        // Auto-select first guild for fleet mode
         if (guilds.length > 0) {
           const targetGuild =
             guilds.find((g: any) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId) ||
@@ -149,8 +161,13 @@ export default function LiveVoiceStudioPage() {
             (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
           );
 
-          if (voiceChannels.length > 0 && !selectedFleetChannelId) {
-            setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
+          if (voiceChannels.length > 0) {
+            if (!selectedFleetChannelId) {
+              setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
+            }
+          } else {
+            // Default to manual mode if no voice channels configured
+            setChannelInputMode('manual');
           }
         }
 
@@ -196,7 +213,7 @@ export default function LiveVoiceStudioPage() {
     loadDestinations();
   }, [currentWorkspace]);
 
-  // When fleet guild changes, auto-select its first voice channel
+  // When fleet guild changes, update channel options
   const handleFleetGuildChange = (guildIdOrUuid: string) => {
     setSelectedFleetGuildId(guildIdOrUuid);
     const targetGuild = guildsList.find(
@@ -210,7 +227,58 @@ export default function LiveVoiceStudioPage() {
         setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
       } else {
         setSelectedFleetChannelId('');
+        setChannelInputMode('manual');
       }
+    }
+  };
+
+  // Auto-detect server voice channels
+  const handleAutoDetectChannels = async () => {
+    if (!currentWorkspace || !selectedFleetGuildId) return;
+    setIsDetectingChannels(true);
+    setDetectMsg(null);
+    try {
+      const targetGuild = guildsList.find(
+        (g) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId
+      );
+      const rawGuildId = targetGuild?.guildId || selectedFleetGuildId;
+
+      const res = await fetch(`/api/workspaces/${currentWorkspace.id}/guilds/bulk-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          guildId: rawGuildId,
+          autoSyncChannels: true,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setDetectMsg(`Discovered ${json.data?.discoveredChannels || 0} voice channels!`);
+        await loadDestinations();
+        setChannelInputMode('dropdown');
+      } else {
+        setDetectMsg(`Notice: ${json.error?.message || 'Please enter Voice Channel ID manually'}`);
+        setChannelInputMode('manual');
+      }
+    } catch (err: any) {
+      setDetectMsg(`Notice: Please enter Voice Channel ID manually`);
+      setChannelInputMode('manual');
+    } finally {
+      setIsDetectingChannels(false);
+      setTimeout(() => setDetectMsg(null), 4000);
+    }
+  };
+
+  // Paste channel ID from clipboard
+  const handlePasteChannelId = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const cleaned = text.trim();
+      if (cleaned) {
+        setManualChannelId(cleaned);
+      }
+    } catch {
+      // Clipboard access denied or unavailable
     }
   };
 
@@ -222,16 +290,28 @@ export default function LiveVoiceStudioPage() {
     );
   };
 
-  // Select all fleet bots
   const handleSelectAllFleetBots = () => {
     if (sessionState === 'streaming') return;
     setSelectedFleetBotIds(botsList.map((b) => b.id));
   };
 
-  // Deselect all fleet bots
   const handleDeselectAllFleetBots = () => {
     if (sessionState === 'streaming') return;
     setSelectedFleetBotIds([]);
+  };
+
+  // Set unified volume for ALL bots simultaneously (supports up to 1000% volume)
+  const handleSetUnifiedGain = (newGain: number) => {
+    const clamped = Math.max(0, Math.min(10.0, newGain));
+    setMasterGain(clamped);
+
+    // Apply to all output cards so every bot works at the exact same volume
+    setOutputCards((prev) => prev.map((c) => ({ ...c, gain: clamped })));
+
+    // Send SET_MASTER_GAIN to MediaGateway to sync all Discord bot players
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'SET_MASTER_GAIN', gain: clamped }));
+    }
   };
 
   // Duration counter during streaming
@@ -258,12 +338,27 @@ export default function LiveVoiceStudioPage() {
     (c: any) => c.id === selectedFleetChannelId || c.channelId === selectedFleetChannelId
   );
 
-  // START VOICE SESSION & BROADCAST MICROPHONE
+  // Effective channel ID: manual input or dropdown selection
+  const effectiveChannelId =
+    channelInputMode === 'manual' || currentFleetVoiceChannels.length === 0
+      ? manualChannelId.trim()
+      : selectedFleetChannelId || manualChannelId.trim();
+
+  // Effective channel display name
+  const effectiveChannelDisplayName =
+    channelInputMode === 'manual' || currentFleetVoiceChannels.length === 0
+      ? manualChannelId.trim()
+        ? `Voice Channel #${manualChannelId.trim()}`
+        : 'Manual Channel ID'
+      : currentFleetChannel?.name
+      ? `#${currentFleetChannel.name}`
+      : `Voice Channel #${effectiveChannelId}`;
+
+  // START VOICE SESSION & BROADCAST MICROPHONE TO ALL BOTS AT UNIFIED VOLUME
   const handleStartSession = async () => {
     if (!currentWorkspace) return;
     setErrorMsg(null);
 
-    // Prepare destination payload based on routing mode
     let targetDestinations: Array<{
       botId: string;
       botName: string;
@@ -274,8 +369,18 @@ export default function LiveVoiceStudioPage() {
     }> = [];
 
     if (routingMode === 'fleet') {
-      if (!currentFleetGuild || !currentFleetChannel || selectedFleetBotIds.length === 0) {
-        setErrorMsg('Please select a Server, Voice Channel, and at least one Bot to stream.');
+      if (!currentFleetGuild) {
+        setErrorMsg('Please select a Target Discord Server.');
+        return;
+      }
+
+      if (!effectiveChannelId) {
+        setErrorMsg('Please enter or select a Target Voice Channel ID.');
+        return;
+      }
+
+      if (selectedFleetBotIds.length === 0) {
+        setErrorMsg('Please select at least one Discord Bot to connect.');
         return;
       }
 
@@ -286,8 +391,8 @@ export default function LiveVoiceStudioPage() {
           botName: bot?.displayName || 'Discord Bot',
           guildId: currentFleetGuild.id || currentFleetGuild.guildId,
           guildName: currentFleetGuild.displayName,
-          channelId: currentFleetChannel.id || currentFleetChannel.channelId,
-          channelName: currentFleetChannel.name,
+          channelId: effectiveChannelId,
+          channelName: effectiveChannelDisplayName,
         };
       });
     } else {
@@ -378,7 +483,7 @@ export default function LiveVoiceStudioPage() {
       };
       updateMeter();
 
-      // 3. Create Voice Session on Backend API
+      // 3. Create Voice Session on Backend API with Unified Volume
       const sessionPayload = {
         workspaceId: currentWorkspace.id,
         destinations: targetDestinations.map((d) => ({
@@ -392,7 +497,7 @@ export default function LiveVoiceStudioPage() {
           noiseSuppression,
           highPassFilter,
           compressor: compressorEnabled,
-          inputGain,
+          inputGain: masterGain, // Send unified gain up to 10.0 (1000%)
         },
       };
 
@@ -410,7 +515,7 @@ export default function LiveVoiceStudioPage() {
       const { sessionId, mediaToken, endpoints } = sessionJson.data;
       setCurrentSessionId(sessionId);
 
-      // Set output cards for all targeted bots
+      // Initialize all output cards to the exact same unified volume
       setOutputCards(
         targetDestinations.map((d, idx) => ({
           endpointId: endpoints[idx]?.endpointId || `ep_${idx}`,
@@ -419,7 +524,7 @@ export default function LiveVoiceStudioPage() {
           channelName: d.channelName,
           guildName: d.guildName,
           state: 'connected',
-          gain: 1.0,
+          gain: masterGain, // exact same volume for every bot
           muted: false,
           vuLevel: 0,
         }))
@@ -431,7 +536,7 @@ export default function LiveVoiceStudioPage() {
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
 
-      // 5. ScriptProcessorNode for streaming PCM Audio Chunks
+      // 5. ScriptProcessorNode for streaming amplified PCM Audio Chunks
       const bufferSize = 2048;
       const scriptProcessor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
       compressor.connect(scriptProcessor);
@@ -440,17 +545,19 @@ export default function LiveVoiceStudioPage() {
       scriptProcessor.onaudioprocess = (e) => {
         if (ws.readyState === WebSocket.OPEN && !isMicMuted) {
           const inputChannel = e.inputBuffer.getChannelData(0);
-          // Convert Float32 to 16-bit PCM buffer
           const pcm16 = new Int16Array(inputChannel.length);
+
+          // Apply master gain directly to amplify PCM frames (supports 1000% volume)
+          const currentGain = masterGainRef.current;
           for (let i = 0; i < inputChannel.length; i++) {
-            const s = Math.max(-1, Math.min(1, inputChannel[i]));
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            const sample = inputChannel[i] * currentGain;
+            const clamped = Math.max(-1, Math.min(1, sample));
+            pcm16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
           }
           ws.send(pcm16.buffer);
         }
       };
 
-      // Handle WebSocket messages
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
@@ -469,6 +576,10 @@ export default function LiveVoiceStudioPage() {
 
       ws.onopen = async () => {
         await fetch(`/api/voice-sessions/${sessionId}/start`, { method: 'POST' });
+        // Ensure Media Gateway sets all workers to masterGain immediately
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'SET_MASTER_GAIN', gain: masterGain }));
+        }
         setSessionState('streaming');
         setActiveVoiceSession({ sessionId, state: 'streaming' });
       };
@@ -602,7 +713,7 @@ export default function LiveVoiceStudioPage() {
             </span>
           </h1>
           <p className="text-xs text-muted-foreground mt-1">
-            Connect all Discord bots to a specific voice channel and stream your microphone voice live.
+            Connect all Discord bots to your chosen channel with up to 1000% volume and broadcast your voice live.
           </p>
         </div>
 
@@ -621,7 +732,7 @@ export default function LiveVoiceStudioPage() {
               onClick={handleStartSession}
               disabled={
                 routingMode === 'fleet'
-                  ? selectedFleetBotIds.length === 0 || !selectedFleetChannelId
+                  ? selectedFleetBotIds.length === 0 || !effectiveChannelId
                   : selectedDestinationIds.length === 0
               }
               className="flex items-center space-x-1.5 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/25 transition disabled:opacity-50"
@@ -718,7 +829,7 @@ export default function LiveVoiceStudioPage() {
           {/* Input Gain Slider */}
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <span className="font-medium text-muted-foreground">Microphone Gain</span>
+              <span className="font-medium text-muted-foreground">Pre-Amp Input Gain</span>
               <span className="font-mono text-[11px] text-foreground">{Math.round(inputGain * 100)}%</span>
             </div>
             <input
@@ -780,7 +891,7 @@ export default function LiveVoiceStudioPage() {
           </div>
         </div>
 
-        {/* 2. FLEET CHANNEL CONNECTOR PANEL (User Requirement: Connect all bots to specific channel & stream voice) */}
+        {/* 2. FLEET CHANNEL CONNECTOR PANEL */}
         <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between space-y-5">
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
@@ -821,11 +932,12 @@ export default function LiveVoiceStudioPage() {
               </div>
             </div>
 
-            {/* FLEET CONNECTOR MODE (PRIMARY) */}
+            {/* FLEET CONNECTOR MODE */}
             {routingMode === 'fleet' ? (
               <div className="space-y-4 text-xs">
                 {/* Server & Channel Selectors */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* TARGET DISCORD SERVER */}
                   <div>
                     <label className="block text-xs font-medium text-foreground mb-1 flex items-center gap-1.5">
                       <Server className="w-3.5 h-3.5 text-primary" />
@@ -849,27 +961,94 @@ export default function LiveVoiceStudioPage() {
                     </select>
                   </div>
 
+                  {/* TARGET VOICE CHANNEL (DROPDOWN OR MANUAL CHANNEL ID) */}
                   <div>
-                    <label className="block text-xs font-medium text-foreground mb-1 flex items-center gap-1.5">
-                      <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Target Voice Channel</span>
-                    </label>
-                    <select
-                      value={selectedFleetChannelId}
-                      onChange={(e) => setSelectedFleetChannelId(e.target.value)}
-                      disabled={sessionState === 'streaming' || currentFleetVoiceChannels.length === 0}
-                      className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
-                    >
-                      {currentFleetVoiceChannels.length === 0 ? (
-                        <option value="">No Voice Channels Available</option>
-                      ) : (
-                        currentFleetVoiceChannels.map((ch: any) => (
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                        <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Target Voice Channel</span>
+                      </label>
+
+                      {/* Mode toggle */}
+                      <div className="flex items-center space-x-1">
+                        <button
+                          type="button"
+                          onClick={() => setChannelInputMode('manual')}
+                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                            channelInputMode === 'manual'
+                              ? 'bg-primary text-primary-foreground font-bold'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Manual ID
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setChannelInputMode('dropdown')}
+                          disabled={currentFleetVoiceChannels.length === 0}
+                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                            channelInputMode === 'dropdown'
+                              ? 'bg-primary text-primary-foreground font-bold'
+                              : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
+                          }`}
+                        >
+                          List ({currentFleetVoiceChannels.length})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* MANUAL INPUT MODE (USER REQUEST: add manually channel id and click connect) */}
+                    {channelInputMode === 'manual' || currentFleetVoiceChannels.length === 0 ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center space-x-1.5">
+                          <input
+                            type="text"
+                            placeholder="Paste Discord Voice Channel ID..."
+                            value={manualChannelId}
+                            onChange={(e) => setManualChannelId(e.target.value)}
+                            disabled={sessionState === 'streaming'}
+                            className="flex-1 bg-secondary/80 border border-emerald-500/50 focus:border-emerald-400 rounded-lg px-3 py-2 text-foreground font-mono outline-none text-xs shadow-inner"
+                          />
+                          <button
+                            type="button"
+                            onClick={handlePasteChannelId}
+                            disabled={sessionState === 'streaming'}
+                            title="Paste from clipboard"
+                            className="px-2.5 py-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold flex items-center gap-1"
+                          >
+                            <Clipboard className="w-3.5 h-3.5" />
+                            <span>Paste</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleAutoDetectChannels}
+                            disabled={isDetectingChannels || sessionState === 'streaming'}
+                            title="Auto-detect all voice channels in server"
+                            className="p-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-primary hover:text-primary transition"
+                          >
+                            <Wand2 className={`w-3.5 h-3.5 ${isDetectingChannels ? 'animate-spin' : ''}`} />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
+                          <span>Right-click voice channel in Discord &gt; &quot;Copy Channel ID&quot;</span>
+                          {detectMsg && <span className="text-emerald-400 font-semibold">{detectMsg}</span>}
+                        </div>
+                      </div>
+                    ) : (
+                      /* DROPDOWN MODE */
+                      <select
+                        value={selectedFleetChannelId}
+                        onChange={(e) => setSelectedFleetChannelId(e.target.value)}
+                        disabled={sessionState === 'streaming' || currentFleetVoiceChannels.length === 0}
+                        className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
+                      >
+                        {currentFleetVoiceChannels.map((ch: any) => (
                           <option key={ch.id || ch.channelId} value={ch.id || ch.channelId}>
                             🔊 {ch.name}
                           </option>
-                        ))
-                      )}
-                    </select>
+                        ))}
+                      </select>
+                    )}
                   </div>
                 </div>
 
@@ -909,7 +1088,7 @@ export default function LiveVoiceStudioPage() {
                       No ready bots available in workspace. Please register bots on the Bot Fleet page.
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-0.5">
                       {botsList.map((bot) => {
                         const isSelected = selectedFleetBotIds.includes(bot.id);
                         return (
@@ -938,16 +1117,16 @@ export default function LiveVoiceStudioPage() {
                   )}
 
                   {/* Operational Status Pill */}
-                  {currentFleetChannel && (
-                    <div className="pt-2 border-t border-border/40 text-[11px] text-muted-foreground flex items-center justify-between">
-                      <span>
-                        Destination: <strong>#{currentFleetChannel.name}</strong> ({currentFleetGuild?.displayName})
-                      </span>
-                      <span className="text-emerald-400 font-mono">
-                        {selectedFleetBotIds.length} bot(s) will join simultaneously
-                      </span>
-                    </div>
-                  )}
+                  <div className="pt-2 border-t border-border/40 text-[11px] text-muted-foreground flex items-center justify-between">
+                    <span>
+                      Target Destination:{' '}
+                      <strong className="text-foreground">{effectiveChannelDisplayName}</strong> (
+                      {currentFleetGuild?.displayName || 'Discord Server'})
+                    </span>
+                    <span className="text-emerald-400 font-mono font-bold">
+                      {selectedFleetBotIds.length} bots will join simultaneously
+                    </span>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -966,7 +1145,7 @@ export default function LiveVoiceStudioPage() {
 
                 {availableDestinations.length === 0 ? (
                   <div className="p-6 text-center text-xs text-muted-foreground bg-secondary/30 rounded-lg">
-                    No voice channels found. Please ensure at least one bot is registered and installed in a Discord guild with voice channels.
+                    No voice channels found. Please switch to &quot;All Bots in Channel&quot; mode above and paste your Discord Voice Channel ID directly.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
@@ -1005,12 +1184,12 @@ export default function LiveVoiceStudioPage() {
             )}
           </div>
 
-          {/* Master Controls Section */}
-          <div className="p-4 rounded-xl bg-secondary/40 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center space-x-4 flex-1">
+          {/* MASTER CONTROLS & UNIFIED VOLUME TO 1000% (USER REQUEST: make volume to 1000 where all bots need to work same volume) */}
+          <div className="p-4 rounded-xl bg-secondary/40 border border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center space-x-3.5 flex-1">
               <button
                 onClick={() => setMasterMuted(!masterMuted)}
-                className={`p-2 rounded-lg border transition ${
+                className={`p-2.5 rounded-lg border transition ${
                   masterMuted
                     ? 'bg-destructive/20 text-destructive border-destructive/30'
                     : 'bg-secondary text-foreground border-border hover:bg-secondary/80'
@@ -1020,26 +1199,92 @@ export default function LiveVoiceStudioPage() {
                 {masterMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </button>
 
-              <div className="flex-1 max-w-xs">
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-medium text-foreground">Master Studio Gain</span>
-                  <span className="font-mono text-muted-foreground">{Math.round(masterGain * 100)}%</span>
+              <div className="flex-1 space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-foreground flex items-center gap-1.5">
+                    <span>Unified Fleet Volume (All Bots):</span>
+                    {masterGain >= 9.9 && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] bg-red-500/20 text-red-400 font-bold px-1.5 py-0.2 rounded border border-red-500/30">
+                        <Flame className="w-3 h-3 fill-current text-red-400" />
+                        <span>MAX LOUD</span>
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={`font-mono text-sm font-bold ${
+                      masterGain >= 9.9 ? 'text-red-400 animate-pulse' : 'text-emerald-400'
+                    }`}
+                  >
+                    {Math.round(masterGain * 100)}%
+                  </span>
                 </div>
+
+                {/* Slider up to 10.0 (1000% Volume) */}
                 <input
                   type="range"
                   min="0"
-                  max="2"
-                  step="0.05"
+                  max="10"
+                  step="0.1"
                   value={masterGain}
-                  onChange={(e) => setMasterGain(parseFloat(e.target.value))}
-                  className="w-full accent-primary cursor-pointer"
+                  onChange={(e) => handleSetUnifiedGain(parseFloat(e.target.value))}
+                  className="w-full accent-emerald-500 cursor-pointer h-2 bg-secondary rounded-lg"
                 />
+
+                {/* Unified Volume Quick Preset Buttons */}
+                <div className="flex items-center space-x-1.5 pt-1 text-[11px]">
+                  <span className="text-muted-foreground mr-1">Presets:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleSetUnifiedGain(1.0)}
+                    className={`px-2 py-0.5 rounded border transition ${
+                      Math.round(masterGain * 100) === 100
+                        ? 'bg-primary text-primary-foreground font-bold border-primary'
+                        : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
+                    }`}
+                  >
+                    100%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetUnifiedGain(2.0)}
+                    className={`px-2 py-0.5 rounded border transition ${
+                      Math.round(masterGain * 100) === 200
+                        ? 'bg-primary text-primary-foreground font-bold border-primary'
+                        : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
+                    }`}
+                  >
+                    200%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetUnifiedGain(5.0)}
+                    className={`px-2 py-0.5 rounded border transition ${
+                      Math.round(masterGain * 100) === 500
+                        ? 'bg-primary text-primary-foreground font-bold border-primary'
+                        : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
+                    }`}
+                  >
+                    500%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetUnifiedGain(10.0)}
+                    className={`px-2.5 py-0.5 rounded border font-bold transition flex items-center gap-1 ${
+                      Math.round(masterGain * 100) === 1000
+                        ? 'bg-red-600 text-white border-red-500 shadow-md shadow-red-500/30'
+                        : 'bg-secondary text-red-400 border-red-500/30 hover:bg-red-500/10'
+                    }`}
+                  >
+                    <Flame className="w-3 h-3 fill-current" />
+                    <span>1000% (MAX)</span>
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="text-xs text-muted-foreground text-right">
+            <div className="text-xs text-muted-foreground md:text-right border-t md:border-t-0 pt-2 md:pt-0 border-border/40 shrink-0">
               <div>Output Format: <strong className="text-foreground">PCM 48kHz Mono</strong></div>
-              <div>Duration: <strong className="text-foreground font-mono">{sessionDurationSec}s</strong></div>
+              <div>Broadcast Duration: <strong className="text-foreground font-mono">{sessionDurationSec}s</strong></div>
             </div>
           </div>
         </div>
@@ -1055,14 +1300,14 @@ export default function LiveVoiceStudioPage() {
           {sessionState === 'streaming' && (
             <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1.5 animate-pulse">
               <Disc className="w-3.5 h-3.5 fill-current" />
-              <span>Broadcasting Live</span>
+              <span>Broadcasting Live at {Math.round(masterGain * 100)}% Volume</span>
             </span>
           )}
         </div>
 
         {outputCards.length === 0 ? (
           <div className="p-12 text-center bg-card border border-border rounded-xl text-xs text-muted-foreground">
-            No active bots transmitting. Select your target channel and bots above, then click &quot;Stream Voice to All Bots&quot;.
+            No active bots transmitting. Paste your Voice Channel ID above, select your bots, and click &quot;Stream Voice to All Bots&quot;.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1079,7 +1324,7 @@ export default function LiveVoiceStudioPage() {
                         <span>{card.botName}</span>
                       </h3>
                       <div className="text-[11px] text-muted-foreground">
-                        Channel: <strong>#{card.channelName}</strong> • {card.guildName}
+                        Channel: <strong>{card.channelName}</strong> • {card.guildName}
                       </div>
                     </div>
 
@@ -1110,17 +1355,17 @@ export default function LiveVoiceStudioPage() {
                     </div>
                   </div>
 
-                  {/* Per-Output Gain */}
+                  {/* Per-Output Gain up to 1000% */}
                   <div className="mt-3">
                     <div className="flex items-center justify-between text-[11px] mb-1 text-muted-foreground">
-                      <span>Bot Output Gain</span>
-                      <span className="font-mono">{Math.round(card.gain * 100)}%</span>
+                      <span>Bot Output Volume</span>
+                      <span className="font-mono font-bold text-foreground">{Math.round(card.gain * 100)}%</span>
                     </div>
                     <input
                       type="range"
                       min="0"
-                      max="2"
-                      step="0.05"
+                      max="10"
+                      step="0.1"
                       value={card.gain}
                       onChange={(e) =>
                         handleOutputGainChange(card.endpointId, parseFloat(e.target.value))

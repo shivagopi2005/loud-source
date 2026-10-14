@@ -157,7 +157,11 @@ export class MediaGatewayManager {
     switch (msg.type) {
       case 'SET_MASTER_GAIN':
         if (typeof msg.gain === 'number') {
-          session.masterGain = Math.max(0, Math.min(2.0, msg.gain));
+          session.masterGain = Math.max(0, Math.min(10.0, msg.gain));
+          // Propagate to all voice workers so every bot plays at the exact same unified volume
+          session.endpoints.forEach((worker) => {
+            worker.setGain(session.masterGain);
+          });
           this.broadcastToSession(session, {
             type: 'STATE_CHANGED',
             masterGain: session.masterGain,
@@ -177,7 +181,7 @@ export class MediaGatewayManager {
         if (msg.endpointId && typeof msg.gain === 'number') {
           const worker = session.endpoints.get(msg.endpointId);
           if (worker) {
-            worker.setGain(msg.gain);
+            worker.setGain(Math.max(0, Math.min(10.0, msg.gain)));
           }
         }
         break;
