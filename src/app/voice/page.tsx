@@ -152,22 +152,29 @@ export default function LiveVoiceStudioPage() {
         setGuildsList(guilds);
         setBotsList(readyBots);
 
-        // Auto-select first guild for fleet mode
+        // Auto-select guild for fleet mode (prefer WILD SECTOR if available)
         if (guilds.length > 0) {
+          const wildSector = guilds.find(
+            (g: any) => g.guildId === '1499406517470756955' || g.displayName?.includes('WILD')
+          );
           const targetGuild =
+            wildSector ||
             guilds.find((g: any) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId) ||
             guilds[0];
           const guildIdToUse = targetGuild.guildId || targetGuild.id;
           setSelectedFleetGuildId(guildIdToUse);
+          setManualGuildId((prev) => prev || guildIdToUse);
 
           const voiceChannels = (targetGuild.channels || []).filter(
             (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
           );
 
           if (voiceChannels.length > 0) {
+            const firstChId = voiceChannels[0].channelId || voiceChannels[0].id;
             if (!selectedFleetChannelId) {
-              setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
+              setSelectedFleetChannelId(firstChId);
             }
+            setManualChannelId((prev) => prev || firstChId);
           }
         } else {
           setGuildInputMode('manual');

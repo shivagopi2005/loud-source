@@ -97,17 +97,35 @@ export class VoiceWorkerInstance {
         this.ownsClient = true;
       }
 
-      const guild = await this.client.guilds.fetch(this.guildId);
-      if (!guild) {
-        throw new Error(`Guild ${this.guildId} not found. Please make sure the bot is invited to this server.`);
+      let guild;
+      try {
+        guild = await this.client.guilds.fetch(this.guildId);
+      } catch (gErr: any) {
+        console.warn(`[VoiceWorker:${this.endpointId}] Bot is not in guild ${this.guildId}:`, gErr.message);
+        this.state = 'failed';
+        this.lastErrorCode = 'BOT_NOT_IN_GUILD';
+        return false;
       }
+
+      if (!guild) {
+        this.state = 'failed';
+        this.lastErrorCode = 'GUILD_NOT_FOUND';
+        return false;
+      }
+
+      const botGroupId = this.client.user?.id || this.botId;
 
       this.connection = joinVoiceChannel({
         channelId: this.channelId,
         guildId: this.guildId,
         adapterCreator: guild.voiceAdapterCreator as any,
+        group: botGroupId,
         selfDeaf: false,
         selfMute: false,
+      });
+
+      this.connection.on('error', (err) => {
+        console.warn(`[VoiceWorker:${this.endpointId}] VoiceConnection warning:`, err.message);
       });
 
       this.player = createAudioPlayer();

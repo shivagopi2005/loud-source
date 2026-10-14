@@ -247,11 +247,22 @@ export class MediaGatewayManager {
     session.state = 'connecting';
     this.broadcastToSession(session, { type: 'STATE_CHANGED', state: 'connecting' });
 
-    // Connect all endpoints concurrently
-    const connectPromises = Array.from(session.endpoints.values()).map(async (worker) => {
-      const success = await worker.connect();
-      return { worker, success };
-    });
+    // Connect all endpoints with a small stagger (150ms) so UDP IP discovery never collides
+    const workers = Array.from(session.endpoints.values());
+    const connectPromises: Promise<any>[] = [];
+
+    for (const worker of workers) {
+      connectPromises.push(
+        worker.connect().catch((err) => {
+          console.warn(`[MediaGateway] Worker connect error:`, err);
+          return false;
+        })
+      );
+      // Small 150ms stagger between bot joins
+      if (workers.length > 1) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    }
 
     await Promise.all(connectPromises);
 
