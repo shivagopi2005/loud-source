@@ -142,7 +142,12 @@ export class DiscordBotService {
    * Verify guild access and retrieve guild details.
    */
   static async verifyGuildAccess(token: string, guildId: string): Promise<GuildInfo> {
-    if (token.startsWith('mock_') || token.startsWith('test_')) {
+    if (
+      token.startsWith('mock_') ||
+      token.startsWith('test_') ||
+      token.includes('.mock_') ||
+      token.includes('.test_')
+    ) {
       return {
         id: guildId,
         name: 'Official Studio Guild',
@@ -181,7 +186,12 @@ export class DiscordBotService {
    * List channels in a guild and calculate bot permissions for each.
    */
   static async getGuildChannels(token: string, guildId: string): Promise<ChannelInfo[]> {
-    if (token.startsWith('mock_') || token.startsWith('test_')) {
+    if (
+      token.startsWith('mock_') ||
+      token.startsWith('test_') ||
+      token.includes('.mock_') ||
+      token.includes('.test_')
+    ) {
       return [
         {
           id: '100000000000000001',

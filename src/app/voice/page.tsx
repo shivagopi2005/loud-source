@@ -19,6 +19,9 @@ import {
   Layers,
   CheckCircle2,
   AlertTriangle,
+  Users,
+  Check,
+  Disc,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 
@@ -61,9 +64,21 @@ export default function LiveVoiceStudioPage() {
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
   const [inputVuLevel, setInputVuLevel] = useState<number>(0);
 
-  // Studio destinations & session state
+  // Raw fetched data
+  const [guildsList, setGuildsList] = useState<any[]>([]);
+  const [botsList, setBotsList] = useState<any[]>([]);
+
+  // Fleet Channel Connector Panel state (Feature: Connect all bots to specific channel & stream)
+  const [routingMode, setRoutingMode] = useState<'fleet' | 'custom'>('fleet');
+  const [selectedFleetGuildId, setSelectedFleetGuildId] = useState<string>('');
+  const [selectedFleetChannelId, setSelectedFleetChannelId] = useState<string>('');
+  const [selectedFleetBotIds, setSelectedFleetBotIds] = useState<string[]>([]);
+
+  // Custom matrix destinations
   const [availableDestinations, setAvailableDestinations] = useState<VoiceDestination[]>([]);
   const [selectedDestinationIds, setSelectedDestinationIds] = useState<string[]>([]);
+
+  // Session state
   const [sessionState, setSessionState] = useState<
     'idle' | 'awaiting_start' | 'connecting' | 'streaming' | 'stopping' | 'stopped'
   >('idle');
@@ -114,12 +129,39 @@ export default function LiveVoiceStudioPage() {
         const guildsData = await guildsRes.json();
         const botsData = await botsRes.json();
 
-        const destinations: VoiceDestination[] = [];
-        const readyBots = (botsData.data || []).filter(
+        const guilds = guildsData.data || [];
+        const rawBots = botsData.data || [];
+        const readyBots = rawBots.filter(
           (b: any) => b.status === 'ready' || b.status === 'connected'
         );
 
-        for (const guild of guildsData.data || []) {
+        setGuildsList(guilds);
+        setBotsList(readyBots);
+
+        // Auto-select first guild and voice channel for fleet mode
+        if (guilds.length > 0) {
+          const targetGuild =
+            guilds.find((g: any) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId) ||
+            guilds[0];
+          setSelectedFleetGuildId(targetGuild.id || targetGuild.guildId);
+
+          const voiceChannels = (targetGuild.channels || []).filter(
+            (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
+          );
+
+          if (voiceChannels.length > 0 && !selectedFleetChannelId) {
+            setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
+          }
+        }
+
+        // Auto-select ALL ready bots for the fleet
+        if (readyBots.length > 0 && selectedFleetBotIds.length === 0) {
+          setSelectedFleetBotIds(readyBots.map((b: any) => b.id));
+        }
+
+        // Build flat matrix destinations
+        const destinations: VoiceDestination[] = [];
+        for (const guild of guilds) {
           const voiceChannels = (guild.channels || []).filter(
             (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
           );
@@ -130,9 +172,9 @@ export default function LiveVoiceStudioPage() {
                 id: `${bot.id}_${ch.id}`,
                 botId: bot.id,
                 botName: bot.displayName,
-                guildId: guild.guildId,
+                guildId: guild.id || guild.guildId,
                 guildName: guild.displayName,
-                channelId: ch.channelId,
+                channelId: ch.id || ch.channelId,
                 channelName: ch.name,
                 channelType: ch.type,
               });
@@ -154,6 +196,44 @@ export default function LiveVoiceStudioPage() {
     loadDestinations();
   }, [currentWorkspace]);
 
+  // When fleet guild changes, auto-select its first voice channel
+  const handleFleetGuildChange = (guildIdOrUuid: string) => {
+    setSelectedFleetGuildId(guildIdOrUuid);
+    const targetGuild = guildsList.find(
+      (g) => g.id === guildIdOrUuid || g.guildId === guildIdOrUuid
+    );
+    if (targetGuild) {
+      const voiceChannels = (targetGuild.channels || []).filter(
+        (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
+      );
+      if (voiceChannels.length > 0) {
+        setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
+      } else {
+        setSelectedFleetChannelId('');
+      }
+    }
+  };
+
+  // Toggle bot selection in fleet panel
+  const toggleFleetBot = (botId: string) => {
+    if (sessionState === 'streaming') return;
+    setSelectedFleetBotIds((prev) =>
+      prev.includes(botId) ? prev.filter((id) => id !== botId) : [...prev, botId]
+    );
+  };
+
+  // Select all fleet bots
+  const handleSelectAllFleetBots = () => {
+    if (sessionState === 'streaming') return;
+    setSelectedFleetBotIds(botsList.map((b) => b.id));
+  };
+
+  // Deselect all fleet bots
+  const handleDeselectAllFleetBots = () => {
+    if (sessionState === 'streaming') return;
+    setSelectedFleetBotIds([]);
+  };
+
   // Duration counter during streaming
   useEffect(() => {
     let timer: any = null;
@@ -167,10 +247,65 @@ export default function LiveVoiceStudioPage() {
     return () => clearInterval(timer);
   }, [sessionState]);
 
-  // START VOICE SESSION
+  // Current active guild and channels for Fleet mode
+  const currentFleetGuild = guildsList.find(
+    (g) => g.id === selectedFleetGuildId || g.guildId === selectedFleetGuildId
+  );
+  const currentFleetVoiceChannels = (currentFleetGuild?.channels || []).filter(
+    (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
+  );
+  const currentFleetChannel = currentFleetVoiceChannels.find(
+    (c: any) => c.id === selectedFleetChannelId || c.channelId === selectedFleetChannelId
+  );
+
+  // START VOICE SESSION & BROADCAST MICROPHONE
   const handleStartSession = async () => {
-    if (!currentWorkspace || selectedDestinationIds.length === 0) return;
+    if (!currentWorkspace) return;
     setErrorMsg(null);
+
+    // Prepare destination payload based on routing mode
+    let targetDestinations: Array<{
+      botId: string;
+      botName: string;
+      guildId: string;
+      guildName: string;
+      channelId: string;
+      channelName: string;
+    }> = [];
+
+    if (routingMode === 'fleet') {
+      if (!currentFleetGuild || !currentFleetChannel || selectedFleetBotIds.length === 0) {
+        setErrorMsg('Please select a Server, Voice Channel, and at least one Bot to stream.');
+        return;
+      }
+
+      targetDestinations = selectedFleetBotIds.map((bId) => {
+        const bot = botsList.find((b) => b.id === bId);
+        return {
+          botId: bId,
+          botName: bot?.displayName || 'Discord Bot',
+          guildId: currentFleetGuild.id || currentFleetGuild.guildId,
+          guildName: currentFleetGuild.displayName,
+          channelId: currentFleetChannel.id || currentFleetChannel.channelId,
+          channelName: currentFleetChannel.name,
+        };
+      });
+    } else {
+      const selected = availableDestinations.filter((d) => selectedDestinationIds.includes(d.id));
+      if (selected.length === 0) {
+        setErrorMsg('Please select at least one voice destination.');
+        return;
+      }
+      targetDestinations = selected.map((d) => ({
+        botId: d.botId,
+        botName: d.botName,
+        guildId: d.guildId,
+        guildName: d.guildName,
+        channelId: d.channelId,
+        channelName: d.channelName,
+      }));
+    }
+
     setSessionState('connecting');
 
     try {
@@ -216,7 +351,7 @@ export default function LiveVoiceStudioPage() {
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
 
-      // Connect nodes
+      // Connect graph
       source.connect(gainNode);
       gainNode.connect(highPass);
       highPass.connect(compressor);
@@ -244,17 +379,12 @@ export default function LiveVoiceStudioPage() {
       updateMeter();
 
       // 3. Create Voice Session on Backend API
-      const selectedDests = availableDestinations.filter((d) =>
-        selectedDestinationIds.includes(d.id)
-      );
-
-      // Fetch corresponding channelConfig IDs
       const sessionPayload = {
         workspaceId: currentWorkspace.id,
-        destinations: selectedDests.map((d) => ({
+        destinations: targetDestinations.map((d) => ({
           botId: d.botId,
-          guildConnectionId: d.guildId, // Handled by server lookup
-          channelConfigId: d.channelId, // Handled by server lookup
+          guildConnectionId: d.guildId,
+          channelConfigId: d.channelId,
         })),
         audioConfiguration: {
           sampleRate: 48000,
@@ -266,7 +396,6 @@ export default function LiveVoiceStudioPage() {
         },
       };
 
-      // Call API to create session & retrieve Media Session Token
       const sessionRes = await fetch('/api/voice-sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -281,9 +410,9 @@ export default function LiveVoiceStudioPage() {
       const { sessionId, mediaToken, endpoints } = sessionJson.data;
       setCurrentSessionId(sessionId);
 
-      // Set output cards
+      // Set output cards for all targeted bots
       setOutputCards(
-        selectedDests.map((d, idx) => ({
+        targetDestinations.map((d, idx) => ({
           endpointId: endpoints[idx]?.endpointId || `ep_${idx}`,
           botId: d.botId,
           botName: d.botName,
@@ -321,7 +450,7 @@ export default function LiveVoiceStudioPage() {
         }
       };
 
-      // Handle WebSocket messages (telemetry & VU meter sync)
+      // Handle WebSocket messages
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
@@ -339,7 +468,6 @@ export default function LiveVoiceStudioPage() {
       };
 
       ws.onopen = async () => {
-        // Trigger server-side voice worker connection
         await fetch(`/api/voice-sessions/${sessionId}/start`, { method: 'POST' });
         setSessionState('streaming');
         setActiveVoiceSession({ sessionId, state: 'streaming' });
@@ -449,7 +577,7 @@ export default function LiveVoiceStudioPage() {
   };
 
   const toggleDestinationSelection = (destId: string) => {
-    if (sessionState === 'streaming') return; // Locked during streaming
+    if (sessionState === 'streaming') return;
     setSelectedDestinationIds((prev) =>
       prev.includes(destId) ? prev.filter((id) => id !== destId) : [...prev, destId]
     );
@@ -474,7 +602,7 @@ export default function LiveVoiceStudioPage() {
             </span>
           </h1>
           <p className="text-xs text-muted-foreground mt-1">
-            Capture browser microphone audio, apply studio filters, and broadcast to multiple Discord voice channels.
+            Connect all Discord bots to a specific voice channel and stream your microphone voice live.
           </p>
         </div>
 
@@ -486,22 +614,30 @@ export default function LiveVoiceStudioPage() {
               className="flex items-center space-x-1.5 px-4 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground font-semibold text-xs border border-border shadow-sm transition"
             >
               <Square className="w-3.5 h-3.5 fill-current" />
-              <span>Stop Session</span>
+              <span>Stop Voice Stream</span>
             </button>
           ) : (
             <button
               onClick={handleStartSession}
-              disabled={selectedDestinationIds.length === 0}
-              className="flex items-center space-x-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-md transition disabled:opacity-50"
+              disabled={
+                routingMode === 'fleet'
+                  ? selectedFleetBotIds.length === 0 || !selectedFleetChannelId
+                  : selectedDestinationIds.length === 0
+              }
+              className="flex items-center space-x-1.5 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/25 transition disabled:opacity-50"
             >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Start Transmission</span>
+              <Play className="w-4 h-4 fill-current" />
+              <span>
+                {routingMode === 'fleet'
+                  ? `Stream Voice to All (${selectedFleetBotIds.length}) Bots`
+                  : 'Start Transmission'}
+              </span>
             </button>
           )}
 
           <button
             onClick={triggerEmergencyStop}
-            className="flex items-center space-x-1.5 px-4 py-2 rounded-lg bg-destructive hover:bg-destructive/90 text-white font-bold text-xs uppercase shadow-lg shadow-destructive/20 transition active:scale-95"
+            className="flex items-center space-x-1.5 px-4 py-2.5 rounded-lg bg-destructive hover:bg-destructive/90 text-white font-bold text-xs uppercase shadow-lg shadow-destructive/20 transition active:scale-95"
           >
             <AlertOctagon className="w-4 h-4" />
             <span>Emergency Stop</span>
@@ -516,14 +652,14 @@ export default function LiveVoiceStudioPage() {
         </div>
       )}
 
-      {/* STUDIO LAYOUT GRID: INPUT MIXER & SESSION CONTROLLER */}
+      {/* STUDIO LAYOUT GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 1. INPUT MIXER SECTION (PRD Section 8.2) */}
+        {/* 1. INPUT MIXER SECTION */}
         <div className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-5">
           <div className="flex items-center justify-between border-b border-border pb-3">
             <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
               <Sliders className="w-4 h-4 text-primary" />
-              <span>Microphone & Ingest Processing</span>
+              <span>Microphone &amp; Voice Ingest</span>
             </h2>
             <button
               onClick={() => setIsMicMuted(!isMicMuted)}
@@ -532,6 +668,7 @@ export default function LiveVoiceStudioPage() {
                   ? 'bg-destructive/20 text-destructive border-destructive/30'
                   : 'bg-secondary text-muted-foreground hover:text-foreground'
               }`}
+              title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}
             >
               {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
             </button>
@@ -561,7 +698,7 @@ export default function LiveVoiceStudioPage() {
           {/* Live Input VU Meter */}
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <span className="font-medium text-muted-foreground">Input Level</span>
+              <span className="font-medium text-muted-foreground">Speech Input Level</span>
               <span className="font-mono text-[11px] text-foreground">{inputVuLevel}%</span>
             </div>
             <div className="h-3 w-full bg-secondary/80 rounded-full overflow-hidden p-0.5 border border-border">
@@ -581,7 +718,7 @@ export default function LiveVoiceStudioPage() {
           {/* Input Gain Slider */}
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <span className="font-medium text-muted-foreground">Input Gain</span>
+              <span className="font-medium text-muted-foreground">Microphone Gain</span>
               <span className="font-mono text-[11px] text-foreground">{Math.round(inputGain * 100)}%</span>
             </div>
             <input
@@ -643,74 +780,232 @@ export default function LiveVoiceStudioPage() {
           </div>
         </div>
 
-        {/* 2. MASTER CONTROLS & DESTINATIONS SELECTOR */}
+        {/* 2. FLEET CHANNEL CONNECTOR PANEL (User Requirement: Connect all bots to specific channel & stream voice) */}
         <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between space-y-5">
-          <div>
+          <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
-              <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
-                <Radio className="w-4 h-4 text-emerald-400" />
-                <span>Destination Voice Routing</span>
-              </h2>
-              <div className="flex items-center space-x-3 text-xs text-muted-foreground">
-                <span>Duration: <strong className="text-foreground font-mono">{sessionDurationSec}s</strong></span>
-                <span>Latency: <strong className="text-emerald-400 font-mono">~{latencyMs}ms</strong></span>
+              <div>
+                <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <Users className="w-4 h-4 text-primary" />
+                  <span>Fleet Voice Channel Connector</span>
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Route your microphone voice to all Discord bots connected to a single channel.
+                </p>
+              </div>
+
+              {/* Routing Mode Tabs */}
+              <div className="flex bg-secondary p-1 rounded-lg text-xs">
+                <button
+                  type="button"
+                  onClick={() => setRoutingMode('fleet')}
+                  className={`px-3 py-1 rounded-md font-semibold transition ${
+                    routingMode === 'fleet'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  All Bots in Channel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRoutingMode('custom')}
+                  className={`px-3 py-1 rounded-md font-semibold transition ${
+                    routingMode === 'custom'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Custom Matrix
+                </button>
               </div>
             </div>
 
-            {/* Destination Selection Checklist */}
-            <div className="mt-4 space-y-2">
-              <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center justify-between">
-                <span>Select Target Bots &amp; Voice Channels ({selectedDestinationIds.length} selected):</span>
-                <button
-                  onClick={loadDestinations}
-                  className="text-primary hover:underline text-[11px] flex items-center gap-1"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>Refresh list</span>
-                </button>
-              </div>
+            {/* FLEET CONNECTOR MODE (PRIMARY) */}
+            {routingMode === 'fleet' ? (
+              <div className="space-y-4 text-xs">
+                {/* Server & Channel Selectors */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1 flex items-center gap-1.5">
+                      <Server className="w-3.5 h-3.5 text-primary" />
+                      <span>Target Discord Server</span>
+                    </label>
+                    <select
+                      value={selectedFleetGuildId}
+                      onChange={(e) => handleFleetGuildChange(e.target.value)}
+                      disabled={sessionState === 'streaming' || guildsList.length === 0}
+                      className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
+                    >
+                      {guildsList.length === 0 ? (
+                        <option value="">No Servers Connected</option>
+                      ) : (
+                        guildsList.map((g) => (
+                          <option key={g.id || g.guildId} value={g.id || g.guildId}>
+                            {g.displayName}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
 
-              {availableDestinations.length === 0 ? (
-                <div className="p-6 text-center text-xs text-muted-foreground bg-secondary/30 rounded-lg">
-                  No voice channels found. Please ensure at least one bot is registered and installed in a Discord guild with voice channels.
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1 flex items-center gap-1.5">
+                      <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Target Voice Channel</span>
+                    </label>
+                    <select
+                      value={selectedFleetChannelId}
+                      onChange={(e) => setSelectedFleetChannelId(e.target.value)}
+                      disabled={sessionState === 'streaming' || currentFleetVoiceChannels.length === 0}
+                      className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
+                    >
+                      {currentFleetVoiceChannels.length === 0 ? (
+                        <option value="">No Voice Channels Available</option>
+                      ) : (
+                        currentFleetVoiceChannels.map((ch: any) => (
+                          <option key={ch.id || ch.channelId} value={ch.id || ch.channelId}>
+                            🔊 {ch.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
-                  {availableDestinations.map((dest) => {
-                    const isSelected = selectedDestinationIds.includes(dest.id);
-                    return (
-                      <div
-                        key={dest.id}
-                        onClick={() => toggleDestinationSelection(dest.id)}
-                        className={`p-3 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
-                          isSelected
-                            ? 'bg-primary/10 border-primary/50 text-foreground'
-                            : 'bg-secondary/40 border-border text-muted-foreground hover:bg-secondary/60'
-                        }`}
+
+                {/* Fleet Bots Selector */}
+                <div className="p-3.5 rounded-lg bg-secondary/40 border border-border space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-foreground flex items-center gap-1.5">
+                      <Bot className="w-3.5 h-3.5 text-primary" />
+                      <span>
+                        Fleet Bots to Connect ({selectedFleetBotIds.length} of {botsList.length} Selected)
+                      </span>
+                    </span>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectAllFleetBots}
+                        disabled={sessionState === 'streaming'}
+                        className="text-[11px] text-primary hover:underline font-semibold"
                       >
-                        <div className="flex items-center space-x-2.5 truncate">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            readOnly
-                            className="rounded accent-primary w-4 h-4 shrink-0"
-                          />
-                          <div className="truncate">
-                            <div className="font-semibold text-foreground truncate">{dest.channelName}</div>
-                            <div className="text-[11px] text-muted-foreground truncate">
-                              Bot: {dest.botName} • {dest.guildName}
+                        Select All
+                      </button>
+                      <span className="text-muted-foreground">•</span>
+                      <button
+                        type="button"
+                        onClick={handleDeselectAllFleetBots}
+                        disabled={sessionState === 'streaming'}
+                        className="text-[11px] text-muted-foreground hover:text-foreground"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+
+                  {botsList.length === 0 ? (
+                    <div className="text-muted-foreground text-[11px] py-2">
+                      No ready bots available in workspace. Please register bots on the Bot Fleet page.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {botsList.map((bot) => {
+                        const isSelected = selectedFleetBotIds.includes(bot.id);
+                        return (
+                          <div
+                            key={bot.id}
+                            onClick={() => toggleFleetBot(bot.id)}
+                            className={`p-2.5 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
+                              isSelected
+                                ? 'bg-primary/10 border-primary/50 text-foreground'
+                                : 'bg-background/60 border-border text-muted-foreground hover:bg-secondary/60'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2 truncate">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                readOnly
+                                className="rounded accent-primary w-3.5 h-3.5 shrink-0"
+                              />
+                              <span className="truncate font-medium">{bot.displayName}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Operational Status Pill */}
+                  {currentFleetChannel && (
+                    <div className="pt-2 border-t border-border/40 text-[11px] text-muted-foreground flex items-center justify-between">
+                      <span>
+                        Destination: <strong>#{currentFleetChannel.name}</strong> ({currentFleetGuild?.displayName})
+                      </span>
+                      <span className="text-emerald-400 font-mono">
+                        {selectedFleetBotIds.length} bot(s) will join simultaneously
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* CUSTOM MATRIX MODE */
+              <div className="space-y-2 text-xs">
+                <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center justify-between">
+                  <span>Select Target Bots &amp; Voice Channels ({selectedDestinationIds.length} selected):</span>
+                  <button
+                    onClick={loadDestinations}
+                    className="text-primary hover:underline text-[11px] flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+
+                {availableDestinations.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-muted-foreground bg-secondary/30 rounded-lg">
+                    No voice channels found. Please ensure at least one bot is registered and installed in a Discord guild with voice channels.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
+                    {availableDestinations.map((dest) => {
+                      const isSelected = selectedDestinationIds.includes(dest.id);
+                      return (
+                        <div
+                          key={dest.id}
+                          onClick={() => toggleDestinationSelection(dest.id)}
+                          className={`p-3 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
+                            isSelected
+                              ? 'bg-primary/10 border-primary/50 text-foreground'
+                              : 'bg-secondary/40 border-border text-muted-foreground hover:bg-secondary/60'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2.5 truncate">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              readOnly
+                              className="rounded accent-primary w-4 h-4 shrink-0"
+                            />
+                            <div className="truncate">
+                              <div className="font-semibold text-foreground truncate">{dest.channelName}</div>
+                              <div className="text-[11px] text-muted-foreground truncate">
+                                Bot: {dest.botName} • {dest.guildName}
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Master Controls Section (PRD Section 8.2 Master section) */}
+          {/* Master Controls Section */}
           <div className="p-4 rounded-xl bg-secondary/40 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center space-x-4 flex-1">
               <button
@@ -720,6 +1015,7 @@ export default function LiveVoiceStudioPage() {
                     ? 'bg-destructive/20 text-destructive border-destructive/30'
                     : 'bg-secondary text-foreground border-border hover:bg-secondary/80'
                 }`}
+                title={masterMuted ? 'Unmute Master' : 'Mute Master'}
               >
                 {masterMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </button>
@@ -743,22 +1039,30 @@ export default function LiveVoiceStudioPage() {
 
             <div className="text-xs text-muted-foreground text-right">
               <div>Output Format: <strong className="text-foreground">PCM 48kHz Mono</strong></div>
-              <div>Buffer Limit: <strong className="text-foreground">2048 frames (42ms)</strong></div>
+              <div>Duration: <strong className="text-foreground font-mono">{sessionDurationSec}s</strong></div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 3. INDEPENDENT OUTPUT CARDS (PRD Section 8.2 & 8.8) */}
+      {/* 3. INDEPENDENT OUTPUT CARDS FOR ALL CONNECTED BOTS */}
       <div className="space-y-3">
-        <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
-          <Layers className="w-4 h-4 text-primary" />
-          <span>Active Discord Voice Output Channels ({outputCards.length})</span>
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+            <Layers className="w-4 h-4 text-primary" />
+            <span>Active Discord Bot Voice Outputs ({outputCards.length})</span>
+          </h2>
+          {sessionState === 'streaming' && (
+            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1.5 animate-pulse">
+              <Disc className="w-3.5 h-3.5 fill-current" />
+              <span>Broadcasting Live</span>
+            </span>
+          )}
+        </div>
 
         {outputCards.length === 0 ? (
           <div className="p-12 text-center bg-card border border-border rounded-xl text-xs text-muted-foreground">
-            No active voice channels transmitting. Select destinations and click &quot;Start Transmission&quot; above.
+            No active bots transmitting. Select your target channel and bots above, then click &quot;Stream Voice to All Bots&quot;.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -771,11 +1075,11 @@ export default function LiveVoiceStudioPage() {
                   <div className="flex items-start justify-between">
                     <div>
                       <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                        <Hash className="w-4 h-4 text-primary" />
-                        <span>{card.channelName}</span>
+                        <Bot className="w-4 h-4 text-primary" />
+                        <span>{card.botName}</span>
                       </h3>
                       <div className="text-[11px] text-muted-foreground">
-                        Bot: <strong>{card.botName}</strong> • {card.guildName}
+                        Channel: <strong>#{card.channelName}</strong> • {card.guildName}
                       </div>
                     </div>
 
@@ -809,7 +1113,7 @@ export default function LiveVoiceStudioPage() {
                   {/* Per-Output Gain */}
                   <div className="mt-3">
                     <div className="flex items-center justify-between text-[11px] mb-1 text-muted-foreground">
-                      <span>Per-Output Gain</span>
+                      <span>Bot Output Gain</span>
                       <span className="font-mono">{Math.round(card.gain * 100)}%</span>
                     </div>
                     <input

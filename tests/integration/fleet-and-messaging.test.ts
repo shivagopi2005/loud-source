@@ -21,6 +21,10 @@ describe('Fleet Operations & Text Messaging Integration (PRD Section 6, 7, 9, 11
     userId = ws.owner_user_id;
     guildConnectionId = ws.guilds[0].id;
     channelConfigId = ws.guilds[0].channel_configs[0].id;
+
+    await prisma.botApplication.deleteMany({
+      where: { application_id: '990000000000000099' },
+    });
   });
 
   it('registers a new bot with encrypted secret and verified identity', async () => {

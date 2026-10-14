@@ -15,8 +15,8 @@ const CreateVoiceSessionSchema = z.object({
     .array(
       z.object({
         botId: z.string().uuid(),
-        guildConnectionId: z.string().uuid(),
-        channelConfigId: z.string().uuid(),
+        guildConnectionId: z.string(),
+        channelConfigId: z.string(),
       })
     )
     .min(1, 'At least one voice destination must be selected'),
@@ -106,16 +106,28 @@ export async function POST(request: NextRequest) {
         throw new Error(`Bot ${dest.botId} does not have an active credential`);
       }
 
-      const guild = await prisma.guildConnection.findUnique({
-        where: { id: dest.guildConnectionId },
+      // Look up guild by UUID or Discord snowflake ID
+      const guild = await prisma.guildConnection.findFirst({
+        where: {
+          workspace_id: data.workspaceId,
+          OR: [{ id: dest.guildConnectionId }, { guild_id: dest.guildConnectionId }],
+        },
       });
 
-      const channel = await prisma.channelConfig.findUnique({
-        where: { id: dest.channelConfigId },
+      if (!guild) {
+        throw new Error(`Guild connection '${dest.guildConnectionId}' not found in workspace`);
+      }
+
+      // Look up channel by UUID or Discord snowflake ID
+      const channel = await prisma.channelConfig.findFirst({
+        where: {
+          guild_connection_id: guild.id,
+          OR: [{ id: dest.channelConfigId }, { channel_id: dest.channelConfigId }],
+        },
       });
 
-      if (!guild || !channel) {
-        throw new Error('Destination guild or channel not found');
+      if (!channel) {
+        throw new Error(`Channel '${dest.channelConfigId}' not found or configured for guild ${guild.display_name}`);
       }
 
       const token = decryptSecret(bot.credentials[0].secret_reference);

@@ -59,7 +59,11 @@ export class VoiceWorkerInstance {
     this.channelId = config.channelId;
     this.gain = config.gain ?? 1.0;
     this.muted = config.muted ?? false;
-    this.isMock = this.botToken.startsWith('mock_') || this.botToken.startsWith('test_');
+    this.isMock =
+      this.botToken.startsWith('mock_') ||
+      this.botToken.startsWith('test_') ||
+      this.botToken.includes('.mock_') ||
+      this.botToken.includes('.test_');
   }
 
   /**
