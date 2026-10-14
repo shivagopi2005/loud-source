@@ -17,6 +17,14 @@ export class FleetGatewayService {
   private static connections = new Map<string, BotGatewayConnection>();
 
   /**
+   * Retrieve active Discord Client for a bot if currently connected.
+   */
+  public static getClient(botId: string): Client | null {
+    const conn = this.connections.get(botId);
+    return conn?.client || null;
+  }
+
+  /**
    * Connect a single bot to Discord Gateway.
    * Brings the bot ONLINE in Discord with a green dot and updates its status.
    */

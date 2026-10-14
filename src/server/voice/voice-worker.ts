@@ -11,6 +11,7 @@ import {
   StreamType,
 } from '@discordjs/voice';
 import { Client, GatewayIntentBits } from 'discord.js';
+import { FleetGatewayService } from '../services/fleet-gateway.service';
 
 export interface VoiceEndpointConfig {
   endpointId: string;
@@ -46,6 +47,7 @@ export class VoiceWorkerInstance {
   public vuLevel = 0;
 
   private client: Client | null = null;
+  private ownsClient = false;
   private connection: VoiceConnection | null = null;
   private player: AudioPlayer | null = null;
   private audioStream: PassThrough | null = null;
@@ -79,16 +81,25 @@ export class VoiceWorkerInstance {
     }
 
     try {
-      // Initialize Discord client if not already active
-      this.client = new Client({
-        intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
-      });
-
-      await this.client.login(this.botToken);
+      // Reuse existing active client from FleetGatewayService if available
+      const existingClient = FleetGatewayService.getClient(this.botId);
+      if (existingClient && existingClient.isReady()) {
+        this.client = existingClient;
+        this.ownsClient = false;
+      } else {
+        this.client = new Client({
+          intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+        });
+        await new Promise<void>((resolve, reject) => {
+          this.client!.once('ready', () => resolve());
+          this.client!.login(this.botToken).catch(reject);
+        });
+        this.ownsClient = true;
+      }
 
       const guild = await this.client.guilds.fetch(this.guildId);
       if (!guild) {
-        throw new Error(`Guild ${this.guildId} not found`);
+        throw new Error(`Guild ${this.guildId} not found. Please make sure the bot is invited to this server.`);
       }
 
       this.connection = joinVoiceChannel({
@@ -227,11 +238,11 @@ export class VoiceWorkerInstance {
       this.connection = null;
     }
 
-    if (this.client) {
+    if (this.client && this.ownsClient) {
       try {
         this.client.destroy();
       } catch {}
-      this.client = null;
     }
+    this.client = null;
   }
 }

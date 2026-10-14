@@ -75,7 +75,7 @@ export default function LiveVoiceStudioPage() {
   const [routingMode, setRoutingMode] = useState<'fleet' | 'custom'>('fleet');
   const [selectedFleetGuildId, setSelectedFleetGuildId] = useState<string>('');
   const [manualGuildId, setManualGuildId] = useState<string>('');
-  const [guildInputMode, setGuildInputMode] = useState<'dropdown' | 'manual'>('dropdown');
+  const [guildInputMode, setGuildInputMode] = useState<'dropdown' | 'manual'>('manual');
   const [selectedFleetChannelId, setSelectedFleetChannelId] = useState<string>('');
   const [manualChannelId, setManualChannelId] = useState<string>('');
   const [channelInputMode, setChannelInputMode] = useState<'dropdown' | 'manual'>('manual');
@@ -159,7 +159,6 @@ export default function LiveVoiceStudioPage() {
             guilds[0];
           const guildIdToUse = targetGuild.guildId || targetGuild.id;
           setSelectedFleetGuildId(guildIdToUse);
-          setManualGuildId((prev) => prev || guildIdToUse);
 
           const voiceChannels = (targetGuild.channels || []).filter(
             (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
@@ -169,9 +168,6 @@ export default function LiveVoiceStudioPage() {
             if (!selectedFleetChannelId) {
               setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
             }
-          } else {
-            // Default to manual mode if no voice channels configured
-            setChannelInputMode('manual');
           }
         } else {
           setGuildInputMode('manual');
@@ -980,12 +976,12 @@ export default function LiveVoiceStudioPage() {
               <div className="space-y-4 text-xs">
                 {/* Server & Channel Selectors */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {/* TARGET DISCORD SERVER */}
+                  {/* TARGET DISCORD SERVER ID */}
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                      <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                         <Server className="w-3.5 h-3.5 text-primary" />
-                        <span>Target Discord Server</span>
+                        <span>Target Server ID (Guild ID)</span>
                       </label>
 
                       {/* Mode toggle */}
@@ -1022,7 +1018,7 @@ export default function LiveVoiceStudioPage() {
                         <div className="flex items-center space-x-1.5">
                           <input
                             type="text"
-                            placeholder="Paste Discord Server / Guild ID..."
+                            placeholder="Paste Discord Server ID (e.g. 1499406517470756955)..."
                             value={manualGuildId}
                             onChange={(e) => setManualGuildId(e.target.value)}
                             disabled={sessionState === 'streaming'}
@@ -1055,19 +1051,19 @@ export default function LiveVoiceStudioPage() {
                       >
                         {guildsList.map((g) => (
                           <option key={g.id || g.guildId} value={g.id || g.guildId}>
-                            {g.displayName}
+                            {g.displayName} ({g.guildId || g.id})
                           </option>
                         ))}
                       </select>
                     )}
                   </div>
 
-                  {/* TARGET VOICE CHANNEL (DROPDOWN OR MANUAL CHANNEL ID) */}
+                  {/* TARGET VOICE CHANNEL ID */}
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                      <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                         <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Target Voice Channel</span>
+                        <span>Target Voice Channel ID</span>
                       </label>
 
                       {/* Mode toggle */}
@@ -1104,7 +1100,7 @@ export default function LiveVoiceStudioPage() {
                         <div className="flex items-center space-x-1.5">
                           <input
                             type="text"
-                            placeholder="Paste Discord Voice Channel ID..."
+                            placeholder="Paste Discord Voice Channel ID (e.g. 1499406518313947284)..."
                             value={manualChannelId}
                             onChange={(e) => setManualChannelId(e.target.value)}
                             disabled={sessionState === 'streaming'}
