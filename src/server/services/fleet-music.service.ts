@@ -259,12 +259,13 @@ export class FleetMusicService {
     query: string;
     requestedById: string;
     targetGuild: any;
+    maxBots?: number;
   }): Promise<{
     track: ResolvedTrack;
     connectedBotCount: number;
     totalBotsInGuild: number;
   }> {
-    const { guildId, voiceChannelId, query, requestedById, targetGuild } = params;
+    const { guildId, voiceChannelId, query, requestedById, targetGuild, maxBots } = params;
     const state = this.getOrCreateState(guildId);
 
     // 1. Resolve audio track
@@ -279,16 +280,18 @@ export class FleetMusicService {
     }
     state.player.stop(true);
 
-    // 3. Connect all fleet bots in this guild simultaneously to the voice channel
+    // 3. Connect fleet bots in this guild simultaneously up to maxBots limit
     const allBots = await prisma.botApplication.findMany({
       where: { status: { notIn: ['removed', 'disabled'] } },
     });
+
+    const botsToConnect = maxBots && maxBots > 0 ? allBots.slice(0, maxBots) : allBots;
 
     let connectedBotCount = 0;
     let totalBotsInGuild = 0;
 
     await Promise.allSettled(
-      allBots.map(async (b) => {
+      botsToConnect.map(async (b) => {
         const bClient = FleetGatewayService.getClient(b.id);
         if (!bClient) return;
 

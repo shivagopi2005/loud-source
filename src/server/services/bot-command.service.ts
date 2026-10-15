@@ -13,6 +13,7 @@ import { createCustomVoiceAdapter } from '../voice/voice-worker';
 import { MediaGatewayManager } from '../voice/media-gateway';
 import { FleetGatewayService } from './fleet-gateway.service';
 import { FleetMusicService } from './fleet-music.service';
+import { PremiumService } from './premium.service';
 
 export interface PrefixCommandDefinition {
   name: string;
@@ -150,6 +151,48 @@ export const PREFIX_COMMANDS: PrefixCommandDefinition[] = [
     description: 'Display currently playing track, progress, volume, and requester.',
     category: 'Fleet Music',
     examples: ['!nowplaying', '!np'],
+  },
+  {
+    name: '247 / stay',
+    usage: '!247 or !stay',
+    description: 'Premium Command: Toggle 24/7 Voice Channel Stay so bots permanently stay connected even when empty.',
+    category: 'Voice Controls',
+    examples: ['!247', '!stay'],
+  },
+  {
+    name: 'premium status',
+    usage: '!premium or !premium status [@user]',
+    description: 'Check user account tier, bot allocation (5 vs 20 vs 27), and active features.',
+    category: 'Premium & Billing',
+    examples: ['!premium', '!premium status', '!premium status @user'],
+  },
+  {
+    name: 'premium redeem',
+    usage: '!premium redeem <LICENSE-KEY>',
+    description: 'Redeem a license key to unlock Premium (20 bots) directly on your Discord User ID.',
+    category: 'Premium & Billing',
+    examples: ['!premium redeem LOUD-9X2A-4F81-7K0P'],
+  },
+  {
+    name: 'premium enable',
+    usage: '!premium enable <@user | user_id> [days]',
+    description: 'Developer Command: Enable Premium Tier (20 bots) on a Discord User ID.',
+    category: 'Developer Controls',
+    examples: ['!premium enable @user 30', '!premium enable 788970167907778562 0'],
+  },
+  {
+    name: 'premium disable',
+    usage: '!premium disable <@user | user_id>',
+    description: 'Developer Command: Revoke Premium and revert user account to Free Tier (5 bots).',
+    category: 'Developer Controls',
+    examples: ['!premium disable @user'],
+  },
+  {
+    name: 'premium generate',
+    usage: '!premium generate [days=30]',
+    description: 'Developer Command: Generate a sellable 16-character license key for instant customer activation.',
+    category: 'Developer Controls',
+    examples: ['!premium generate 30', '!premium generate 0'],
   },
   {
     name: 'help',
@@ -297,6 +340,12 @@ export class BotCommandService {
     try {
       // 0. Supreme Developer / Owner: unrestricted access across all bots (no one should stop dms to me)
       if (discordUserId === DEVELOPER_ID) {
+        return true;
+      }
+
+      // 0.5. Check User-Level Premium: Premium subscribers can command the fleet in any server
+      const userTier = await PremiumService.getUserTier(discordUserId);
+      if (userTier.tier === 'premium' || userTier.tier === 'developer') {
         return true;
       }
 
@@ -462,13 +511,19 @@ export class BotCommandService {
 
     if (!cmd) return;
 
-    // Check authorization: Developer, Workspace Owner, or Added Admin
-    const isAuthorized = await this.isAuthorizedUser(
-      botId,
-      message.author.id,
-      message.member,
-      message.guild
-    );
+    // Public commands accessible to any user: !help, !premium status, !premium redeem
+    const isPublicCommand =
+      cmd === 'help' || (cmd === 'premium' && (sub === 'redeem' || sub === 'status' || !sub));
+
+    // Check authorization: Developer, Premium Subscriber, Workspace Owner, or Added Admin
+    const isAuthorized =
+      isPublicCommand ||
+      (await this.isAuthorizedUser(
+        botId,
+        message.author.id,
+        message.member,
+        message.guild
+      ));
 
     // If unauthorized, silently return without revealing command existence
     if (!isAuthorized) {
@@ -527,9 +582,25 @@ export class BotCommandService {
           );
         }
 
-        // Gather all connected clients in the fleet
+        // Resolve user tier (Free: 5 bots, Premium: 20 bots, Developer: 27+)
+        const userTier = await PremiumService.getUserTier(message.author.id);
+        const maxBots = userTier.maxBots;
+        const maxCount = userTier.maxSpamCount;
+
+        let effectiveCount = count;
+        if (effectiveCount > maxCount) {
+          effectiveCount = maxCount;
+          try {
+            await message.reply(
+              `ℹ️ Free Tier is limited to **.${maxCount}** DM blast count. Upgrade to **Premium** (\`!premium status\`) for up to **.50** blasts with 20 bots!`
+            );
+          } catch {}
+        }
+
+        // Gather all connected clients in the fleet (sliced to user tier limit)
         const allClients = FleetGatewayService.getAllClients();
-        const clientsToUse = allClients.length > 0 ? allClients : [client];
+        const availableClients = allClients.length > 0 ? allClients : [client];
+        const clientsToUse = availableClients.slice(0, maxBots);
 
         let totalDmsSent = 0;
         let successfulBotCount = 0;
@@ -552,7 +623,7 @@ export class BotCommandService {
                 if (!targetUser) return;
 
                 let botSentCount = 0;
-                for (let i = 0; i < count; i++) {
+                for (let i = 0; i < effectiveCount; i++) {
                   if (abortSignal.aborted) break;
                   try {
                     await targetUser.send(messageText);
@@ -628,9 +699,25 @@ export class BotCommandService {
           return;
         }
 
+        // Resolve user tier (Free: 5 bots, Premium: 20 bots, Developer: 27+)
+        const userTier = await PremiumService.getUserTier(message.author.id);
+        const maxBots = userTier.maxBots;
+        const maxCount = userTier.maxSpamCount;
+
+        let effectiveCount = count;
+        if (effectiveCount > maxCount) {
+          effectiveCount = maxCount;
+          try {
+            await message.reply(
+              `ℹ️ Free Tier is limited to **.${maxCount}** spam blast count. Upgrade to **Premium** (\`!premium status\`) for up to **.50** blasts with 20 bots!`
+            );
+          } catch {}
+        }
+
         const channelId = message.channelId;
         const allClients = FleetGatewayService.getAllClients();
-        const clientsToUse = allClients.length > 0 ? allClients : [client];
+        const availableClients = allClients.length > 0 ? allClients : [client];
+        const clientsToUse = availableClients.slice(0, maxBots);
 
         let totalSpamSent = 0;
         let successfulBotCount = 0;
@@ -653,7 +740,7 @@ export class BotCommandService {
               if (!ch || !ch.isTextBased()) return;
 
               let botSentCount = 0;
-              for (let i = 0; i < count; i++) {
+              for (let i = 0; i < effectiveCount; i++) {
                 if (abortSignal.aborted) break;
                 try {
                   await ch.send(messageText);
@@ -716,14 +803,16 @@ export class BotCommandService {
           return;
         }
 
+        const userTier = await PremiumService.getUserTier(message.author.id);
         const allBots = await prisma.botApplication.findMany({
           where: { status: { notIn: ['removed', 'disabled'] } },
         });
+        const botsToJoin = userTier.maxBots ? allBots.slice(0, userTier.maxBots) : allBots;
 
         let joinedCount = 0;
         // ALL BOTS JOIN SIMULTANEOUSLY AT THE EXACT SAME TIME
         await Promise.allSettled(
-          allBots.map(async (b) => {
+          botsToJoin.map(async (b) => {
             const bClient = FleetGatewayService.getClient(b.id);
             if (bClient) {
               const bGuild = bClient.guilds.cache.get(targetGuild.id);
@@ -835,7 +924,16 @@ export class BotCommandService {
         const rawVal = cmd === 'volume' ? args[0] : args[1];
         const val = parseInt(rawVal, 10);
         if (isNaN(val) || val < 1 || val > 10000) {
-          await message.reply('Usage: `!volume <1-10000>` (e.g. `!volume 500` or `!volume 1000`)');
+          await message.reply('Usage: `!volume <1-10000>` (e.g. `!volume 200` or `!volume 1000`)');
+          return;
+        }
+
+        const userTier = await PremiumService.getUserTier(message.author.id);
+        if (val > userTier.maxVolume) {
+          await message.reply(
+            `⚠️ **Free Tier** volume is capped at **200%**.\n` +
+            `Upgrade to **Premium** with \`!premium status\` for up to **10,000% Earth-Shaking Volume Overdrive** across 20 bots!`
+          );
           return;
         }
 
@@ -912,12 +1010,14 @@ export class BotCommandService {
             } catch {}
           }
 
+          const userTier = await PremiumService.getUserTier(message.author.id);
           const result = await FleetMusicService.getInstance().play({
             guildId: message.guild.id,
             voiceChannelId: voiceChannel.id,
             query: restText,
             requestedById: message.author.id,
             targetGuild: message.guild,
+            maxBots: userTier.maxBots,
           });
 
           try {
@@ -925,8 +1025,12 @@ export class BotCommandService {
           } catch {}
 
           const volPct = Math.round(FleetMusicService.getInstance().getNowPlaying(message.guild.id).volume * 100);
+          const tierTag = userTier.tier === 'developer' ? '👑 DEVELOPER' : userTier.tier === 'premium' ? '💎 PREMIUM' : '🆓 FREE';
+          const freeTip = userTier.tier === 'free' ? '\n💡 *Upgrade to Premium (`!premium status`) to command 20 bots simultaneously!*' : '';
+
           await message.reply(
-            `🎶 Playing **${result.track.title}** (\`${result.track.duration}\`) at **Studio Master Quality** (48kHz SoX 28-bit • 384 kbps Opus) across **${result.connectedBotCount} fleet bots** simultaneously in **${voiceChannel.name}** at ${volPct}% volume.`
+            `🎶 Playing **${result.track.title}** (\`${result.track.duration}\`) across **${result.connectedBotCount} fleet bots** simultaneously in **${voiceChannel.name}** at ${volPct}% volume.\n` +
+            `🏷️ **Tier**: **${tierTag}** (Connected: ${result.connectedBotCount} / ${userTier.maxBots} max bots)${freeTip}`
           );
         } catch (err: any) {
           console.warn('[BotCommands] !play error:', err);
@@ -1029,23 +1133,218 @@ export class BotCommandService {
         return;
       }
 
-      // 17. !help
+      // 17. !247 or !stay -> TOGGLE 24/7 VOICE CHANNEL STAY
+      if (cmd === '247' || cmd === 'stay') {
+        if (!message.guild) {
+          await message.reply('❌ This command can only be used in a Discord server.');
+          return;
+        }
+
+        const userTier = await PremiumService.getUserTier(message.author.id);
+        if (userTier.tier === 'free') {
+          await message.reply(
+            '💎 **24/7 Voice Channel Stay** is a **Premium Feature**!\n' +
+            'Upgrade to keep 20 bots in your voice channel 24/7 even when everyone leaves.\n' +
+            'Type `!premium status` to learn more!'
+          );
+          return;
+        }
+
+        const is247 = await PremiumService.toggleGuild247(message.guild.id);
+        try {
+          await message.react(is247 ? '🟢' : '⚪');
+        } catch {}
+        await message.reply(
+          is247
+            ? '🟢 **24/7 Voice Stay ENABLED**: Fleet bots will permanently stay connected to this voice channel 24/7.'
+            : '⚪ **24/7 Voice Stay DISABLED**: Fleet bots will disconnect when the channel becomes idle.'
+        );
+        return;
+      }
+
+      // 18. !premium -> TIER MANAGEMENT, KEY GENERATION, AND REDEMPTION
+      if (cmd === 'premium') {
+        const action = sub; // args[0]
+        const targetArg = args[1];
+        const daysArg = args[2] || args[1];
+
+        // 1. !premium enable <@user | user_id> [days]
+        if (action === 'enable') {
+          if (message.author.id !== DEVELOPER_ID) {
+            await message.reply('⛔ Only the supreme developer can enable premium for users.');
+            return;
+          }
+
+          let targetUserId: string | null = null;
+          const mentionMatch = targetArg?.match(/^<@!?(\d+)>$/);
+          if (mentionMatch) targetUserId = mentionMatch[1];
+          else if (/^\d{10,22}$/.test(targetArg || '')) targetUserId = targetArg;
+
+          if (!targetUserId) {
+            await message.reply('Usage: `!premium enable <@user | user_id> [days=30]`\nExample: `!premium enable @User 30` or `!premium enable 788970167907778562 0` (0 = lifetime)');
+            return;
+          }
+
+          const durationDays = parseInt(daysArg, 10);
+          const effectiveDays = isNaN(durationDays) ? 30 : durationDays;
+
+          await PremiumService.enableUserPremium(targetUserId, effectiveDays, message.author.id);
+          try {
+            await message.react('💎');
+          } catch {}
+          await message.reply(
+            `💎 **[PREMIUM ACTIVATED]**\n` +
+            `👤 **Target User**: <@${targetUserId}>\n` +
+            `⭐ **Plan**: **Premium Fleet Tier (20 Bots)**\n` +
+            `⏳ **Duration**: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n` +
+            `🚀 **Features Unlocked**: 20 Bots simultaneously, 10,000% volume overdrive, 24/7 voice stay, 50-count DM/spam blasts, 320kbps audio!`
+          );
+          return;
+        }
+
+        // 2. !premium disable <@user | user_id>
+        if (action === 'disable') {
+          if (message.author.id !== DEVELOPER_ID) {
+            await message.reply('⛔ Only the supreme developer can disable premium.');
+            return;
+          }
+
+          let targetUserId: string | null = null;
+          const mentionMatch = targetArg?.match(/^<@!?(\d+)>$/);
+          if (mentionMatch) targetUserId = mentionMatch[1];
+          else if (/^\d{10,22}$/.test(targetArg || '')) targetUserId = targetArg;
+
+          if (!targetUserId) {
+            await message.reply('Usage: `!premium disable <@user | user_id>`\nExample: `!premium disable @User`');
+            return;
+          }
+
+          await PremiumService.disableUserPremium(targetUserId);
+          try {
+            await message.react('⚠️');
+          } catch {}
+          await message.reply(`⚠️ **[PREMIUM REVOKED]**\nUser: <@${targetUserId}>\nDowngraded to **Free Tier (5 Bots max)**.`);
+          return;
+        }
+
+        // 3. !premium generate [days=30]
+        if (action === 'generate') {
+          if (message.author.id !== DEVELOPER_ID) {
+            await message.reply('⛔ Only the supreme developer can generate license keys.');
+            return;
+          }
+
+          const durationDays = parseInt(targetArg, 10);
+          const effectiveDays = isNaN(durationDays) ? 30 : durationDays;
+
+          const key = await PremiumService.generateLicenseKey(DEVELOPER_ID, effectiveDays);
+
+          try {
+            await message.author.send(
+              `🔑 **[LICENSE KEY GENERATED]**\n` +
+              `Code: \`${key}\`\n` +
+              `Duration: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n` +
+              `Customer Instruction: Tell the buyer to type \`!premium redeem ${key}\` in Discord!`
+            );
+            await message.react('📬');
+            await message.reply('📬 License key generated and sent to your Direct Messages!');
+          } catch (dmErr) {
+            await message.reply(
+              `🔑 **[LICENSE KEY GENERATED]**\n` +
+              `Code: \`${key}\`\n` +
+              `Duration: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n` +
+              `Customer Instruction: Run \`!premium redeem ${key}\``
+            );
+          }
+          return;
+        }
+
+        // 4. !premium redeem <LICENSE-KEY>
+        if (action === 'redeem') {
+          const code = targetArg;
+          if (!code) {
+            await message.reply('Usage: `!premium redeem <LICENSE-KEY>`\nExample: `!premium redeem LOUD-9X2A-4F81-7K0P`');
+            return;
+          }
+
+          const result = await PremiumService.redeemLicenseKey(code, message.author.id);
+          if (!result.success) {
+            await message.reply(`❌ **Redemption Failed**: ${result.message}`);
+            return;
+          }
+
+          try {
+            await message.react('🎉');
+          } catch {}
+          await message.reply(
+            `🎉 **[PREMIUM UNLOCKED]**\n` +
+            `Congratulations <@${message.author.id}>!\n` +
+            `${result.message}\n` +
+            `🚀 **Your account now has:**\n` +
+            `• **20 Bots** simultaneously connected in voice & chat\n` +
+            `• **10,000% Volume Overdrive** (\`!volume 10000\`)\n` +
+            `• **24/7 Voice Stay** (\`!247\`)\n` +
+            `• **50-Count Blasts** (\`!dm\` and \`!spam .50\`)`
+          );
+          return;
+        }
+
+        // 5. !premium status (or default !premium)
+        const checkTargetId =
+          targetArg?.match(/^<@!?(\d+)>$/)?.[1] ||
+          (/^\d{10,22}$/.test(targetArg || '') ? targetArg : message.author.id);
+        const targetTier = await PremiumService.getUserTier(checkTargetId);
+
+        const tierEmoji = targetTier.tier === 'developer' ? '👑' : targetTier.tier === 'premium' ? '💎' : '🆓';
+        const tierTitle = targetTier.tier.toUpperCase();
+        const expiryText = targetTier.expiresAt
+          ? targetTier.expiresAt.toLocaleDateString()
+          : targetTier.tier === 'free'
+          ? 'N/A'
+          : 'Lifetime';
+
+        const upgradeTip =
+          targetTier.tier === 'free'
+            ? `\n\n💡 **Want to upgrade to Premium?**\n` +
+              `• Unlock **20 Bots** in voice & chat simultaneously\n` +
+              `• Unlock **10,000% Earth-Shaking Volume** (\`!volume 10000\`)\n` +
+              `• Unlock **24/7 Voice Stay** (\`!247\`)\n` +
+              `• Unlock **50-Count DM & Spam Blasts**\n` +
+              `👉 Contact Developer <@${DEVELOPER_ID}> or redeem a key with \`!premium redeem <code>\`!`
+            : '';
+
+        await message.reply(
+          `${tierEmoji} **LOUD STUDIO ACCOUNT TIER**\n` +
+          `👤 **User**: <@${checkTargetId}>\n` +
+          `⭐ **Plan**: **${tierTitle} TIER**\n` +
+          `🤖 **Max Fleet Bots**: **${targetTier.maxBots} Bots**\n` +
+          `🔊 **Max Volume**: **${targetTier.maxVolume}%**\n` +
+          `⚡ **Max Blast Count**: **${targetTier.maxSpamCount} Messages**\n` +
+          `⏳ **Expiration**: **${expiryText}**${upgradeTip}`
+        );
+        return;
+      }
+
+      // 19. !help
       if (cmd === 'help') {
         const lines = [
           '🛡️ **Studio Fleet Commands** (All bots execute simultaneously):',
-          '• `!play <song or link>` / `!p` - ALL bots play music synchronously from search or links',
+          '• `!play <song or link>` / `!p` - ALL bots play music synchronously (Free: 5 bots, Premium: 20 bots)',
           '• `!pause` / `!resume` - Pause or resume music across all fleet bots',
           '• `!nowplaying` / `!np` - Display active track, duration, volume & requester',
-          '• `!dm @user {message} .count` - ALL bots send Direct Messages to target user at the same time',
+          '• `!volume <1-10000>` - Set audio playback volume (Free: up to 200%, Premium: up to 10000%)',
+          '• `!247` or `!stay` - Toggle 24/7 Voice Stay so bots never leave voice channels',
+          '• `!premium status` - Check your account tier, bot allocation, and active features',
+          '• `!premium redeem <KEY>` - Redeem a license key to unlock Premium (20 bots) on your User ID',
+          '• `!dm @user {message} .count` - ALL bots send Direct Messages (Free: .5, Premium: .50)',
           '• `!dm stop` - Stop all active and ongoing DM blasts',
-          '• `!spam {message} .count` - ALL bots simultaneously spam message in this channel',
+          '• `!spam {message} .count` - ALL bots simultaneously spam channel (Free: .5, Premium: .50)',
           '• `!spam stop` - Stop all active channel spam',
-          '• `!status` - Live diagnostics for all bots',
-          '• `!ping` - Check latency and responsiveness',
           '• `!join [channel]` - ALL bots join voice channel simultaneously',
           '• `!leave` - ALL bots leave voice channel simultaneously',
           '• `!stop` - Emergency stop: terminate playback & disconnect all bots',
-          '• `!volume <1-10000>` - Set audio playback volume across all bots',
+          '• `!status` - Live diagnostics for all bots',
+          '• `!ping` - Check latency and responsiveness',
           '• `!mute` / `!unmute` - Mute/unmute all fleet bots',
         ];
         await message.reply(lines.join('\n'));

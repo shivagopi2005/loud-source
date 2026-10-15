@@ -14,6 +14,9 @@ model User {
   username         String
   avatar_url       String?
   status           String            @default("active") // active, suspended, deleted
+  tier             String            @default("free")   // free, premium, developer
+  premium_expires_at DateTime?
+  max_bots_allowed Int               @default(5)        // 5 for free, 20 for premium, 99 for developer
   created_at       DateTime          @default(now())
   updated_at       DateTime          @updatedAt
   deleted_at       DateTime?
@@ -129,6 +132,11 @@ model GuildConnection {
   icon_url            String?
   verification_status String           @default("pending") // pending, verified, failed, uninstalled
   verified_at         DateTime?
+  tier                String           @default("free") // free, premium, developer
+  premium_expires_at  DateTime?
+  max_bots_allowed    Int              @default(5)      // 5 for free, 20 for premium, 99 for developer
+  activated_by_id     String?
+  stay_247            Boolean          @default(false)
   created_at          DateTime         @default(now())
 
   workspace           Workspace        @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
@@ -138,6 +146,7 @@ model GuildConnection {
 
   @@unique([workspace_id, guild_id])
   @@index([workspace_id])
+  @@index([tier])
   @@map("guild_connections")
 }
 
@@ -372,4 +381,22 @@ model SupportReport {
 
   @@index([workspace_id])
   @@map("support_reports")
+}
+
+// 15.19 License Keys for Premium Redemption
+model LicenseKey {
+  id             String    @id @default(uuid())
+  code           String    @unique // e.g. "LOUD-XXXX-YYYY-ZZZZ"
+  tier           String    @default("premium")
+  duration_days  Int       @default(30) // 0 for lifetime
+  is_redeemed    Boolean   @default(false)
+  redeemed_by    String?   // Discord user ID
+  redeemed_guild String?   // Discord guild ID
+  redeemed_at    DateTime?
+  created_by     String    // Developer Discord ID
+  created_at     DateTime  @default(now())
+
+  @@index([code])
+  @@index([is_redeemed])
+  @@map("license_keys")
 }
