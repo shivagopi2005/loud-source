@@ -52,20 +52,34 @@ export class MediaGatewayManager {
   /**
    * Attach WebSocket server for real-time microphone audio ingest & telemetry.
    */
-  public attachServer(serverOrPort: any): void {
+  public attachServer(serverOrPort: any, fallbackPort?: number): void {
     if (this.wss) return;
 
     if (typeof serverOrPort === 'number') {
       this.wss = new WebSocketServer({ port: serverOrPort, host: process.env.HOST || '0.0.0.0' });
       console.log(`[MediaGateway] WebSocket server listening on port ${serverOrPort}`);
+      this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+        this.handleConnection(ws, req);
+      });
     } else {
       this.wss = new WebSocketServer({ server: serverOrPort, path: '/media-stream' });
       console.log(`[MediaGateway] WebSocket server attached to HTTP server path /media-stream`);
-    }
+      this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+        this.handleConnection(ws, req);
+      });
 
-    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-      this.handleConnection(ws, req);
-    });
+      if (typeof fallbackPort === 'number' && fallbackPort > 0) {
+        try {
+          const dedicatedWss = new WebSocketServer({ port: fallbackPort, host: process.env.HOST || '0.0.0.0' });
+          dedicatedWss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+            this.handleConnection(ws, req);
+          });
+          console.log(`[MediaGateway] Also listening on dedicated port ${fallbackPort}`);
+        } catch (e: any) {
+          console.warn(`[MediaGateway] Optional dedicated port ${fallbackPort} warning:`, e.message);
+        }
+      }
+    }
   }
 
   private handleConnection(ws: WebSocket, req: IncomingMessage): void {

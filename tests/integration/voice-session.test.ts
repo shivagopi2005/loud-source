@@ -26,8 +26,9 @@ describe('Voice Session Lifecycle & Emergency Stop (PRD Section 8)', () => {
 
     workspaceId = ws.id;
     userId = ws.owner_user_id;
-    bot1Id = ws.bots[0].id;
-    bot2Id = ws.bots[1].id;
+    const stableBots = ws.bots.filter((b) => b.application_id !== '990000000000000099');
+    bot1Id = stableBots[0].id;
+    bot2Id = stableBots[1].id;
     guildConnId = ws.guilds[0].id;
 
     const voiceChannels = ws.guilds[0].channel_configs.filter((c) => c.channel_type === 2 || c.channel_type === 13);

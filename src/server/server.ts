@@ -57,13 +57,12 @@ async function bootstrap() {
     console.log(`> Ready on http://${listenHost}:${port}`);
   });
 
-  // 3. Attach Media Gateway WebSocket server
-  // We can attach to a dedicated port or the main server
+  // 3. Attach Media Gateway WebSocket server directly to HTTP server and dedicated port
   try {
-    mediaGateway.attachServer(mediaPort);
-    console.log(`> Media Gateway listening on ws://${hostname}:${mediaPort}`);
+    mediaGateway.attachServer(server, mediaPort);
+    console.log(`> Media Gateway listening on /media-stream (HTTP server port ${port}) and ws://0.0.0.0:${mediaPort}`);
   } catch (err) {
-    console.warn(`[MediaGateway] Port ${mediaPort} bind error:`, err);
+    console.warn(`[MediaGateway] WebSocket attach error:`, err);
   }
 
   // 4. Start BullMQ background workers

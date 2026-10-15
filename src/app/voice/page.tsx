@@ -1450,8 +1450,9 @@ export default function LiveVoiceStudioPage() {
         })
       );
 
-      // 4. Connect to Media Gateway WebSocket
-      const wsUrl = `ws://${window.location.hostname}:3001?token=${mediaToken}`;
+      // 4. Connect to Media Gateway WebSocket (supports secure wss:// over HTTPS and /media-stream proxy)
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/media-stream?token=${mediaToken}`;
       console.log('[VoiceStudio] Connecting to MediaGateway WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;

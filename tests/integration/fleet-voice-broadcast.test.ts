@@ -19,8 +19,9 @@ describe('Fleet Server Join & Multi-Bot Channel Voice Streaming', () => {
     if (!ws) throw new Error('Database must be seeded');
     workspaceId = ws.id;
     userId = ws.owner_user_id;
-    bot1Id = ws.bots[0].id;
-    bot2Id = ws.bots[1].id;
+    const stableBots = ws.bots.filter((b) => b.application_id !== '990000000000000099');
+    bot1Id = stableBots[0].id;
+    bot2Id = stableBots[1].id;
     guildConnId = ws.guilds[0].id;
 
     const voiceChannel = ws.guilds[0].channel_configs.find(
