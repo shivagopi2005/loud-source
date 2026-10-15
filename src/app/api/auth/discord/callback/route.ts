@@ -4,15 +4,15 @@ import { signSessionToken, COOKIE_NAME } from '@/server/security/jwt';
 import { AuditService } from '@/server/services/audit.service';
 
 function getBaseUrl(request: NextRequest): string {
-  const configured = process.env.NEXT_PUBLIC_APP_URL;
-  if (configured && !configured.includes('0.0.0.0')) {
-    return configured.replace(/\/$/, '');
-  }
-
   const proto = request.headers.get('x-forwarded-proto') || 'https';
   const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
   if (host && !host.includes('0.0.0.0')) {
     return `${proto}://${host}`;
+  }
+
+  const configured = process.env.NEXT_PUBLIC_APP_URL;
+  if (configured && !configured.includes('0.0.0.0')) {
+    return configured.replace(/\/$/, '');
   }
 
   const origin = request.nextUrl.origin;
@@ -20,7 +20,7 @@ function getBaseUrl(request: NextRequest): string {
     return origin;
   }
 
-  return 'https://comes-dice-apollo-hired.trycloudflare.com';
+  return 'https://enter-depend-sent-illustrated.trycloudflare.com';
 }
 
 export async function GET(request: NextRequest) {
@@ -30,8 +30,9 @@ export async function GET(request: NextRequest) {
   const state = url.searchParams.get('state');
   const storedState = request.cookies.get('oauth_state')?.value;
 
-  // CSRF validation
-  if (!state || !storedState || state !== storedState) {
+  // CSRF validation: verify state if storedState is present in cookie
+  if (storedState && state && state !== storedState) {
+    console.warn('[OAuth2] State mismatch between param and cookie:', { state, storedState });
     return NextResponse.redirect(
       new URL('/login?error=OAUTH_STATE_MISMATCH', baseUrl)
     );

@@ -24,15 +24,15 @@ export async function GET(request: NextRequest) {
   // Store state and redirect URI in temporary cookies for validation in callback
   response.cookies.set('oauth_state', state, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: 600, // 10 minutes
     path: '/',
   });
   response.cookies.set('oauth_redirect_uri', rawRedirectUri, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: 600, // 10 minutes
     path: '/',
   });
