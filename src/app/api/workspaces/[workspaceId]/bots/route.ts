@@ -59,15 +59,17 @@ export async function GET(
 
     return okResponse(
       bots.map((b) => {
-        const isOnline = FleetGatewayService.isBotOnline(b.id) || b.status === 'connected';
+        const isOnline = FleetGatewayService.isBotOnline(b.id);
+        const hasToken = b.credentials.length > 0;
         const liveGuildIds = FleetGatewayService.getBotGuildIds(b.id);
         return {
           id: b.id,
           applicationId: b.application_id,
           displayName: b.display_name,
           verifiedBotUserId: b.verified_bot_user_id,
-          status: isOnline ? 'connected' : b.status,
+          status: isOnline ? 'connected' : hasToken ? 'ready' : 'missing_token',
           online: isOnline,
+          hasToken,
           liveGuildIds,
           lastHealthCheckAt: b.last_health_check_at,
           tags: b.tags,

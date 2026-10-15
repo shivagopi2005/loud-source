@@ -518,9 +518,15 @@ function BotFleetContent() {
                     </div>
                     <div className="flex items-center justify-between">
                       <span>Credentials:</span>
-                      <span className="font-mono text-[11px] text-foreground bg-secondary px-2 py-0.5 rounded">
-                        v{bot.credential?.version || 1} • {bot.credential?.maskedToken || '••••••••'}
-                      </span>
+                      {bot.credential ? (
+                        <span className="font-mono text-[11px] text-foreground bg-secondary px-2 py-0.5 rounded">
+                          v{bot.credential.version} • {bot.credential.maskedToken}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">
+                          No Token Attached
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center justify-between">
                       <span>Guilds linked:</span>
@@ -547,8 +553,11 @@ function BotFleetContent() {
                 <div className="pt-3 border-t border-border flex items-center justify-between">
                   <button
                     onClick={() => handleToggleSingleBot(bot.id, isBotOnline)}
+                    disabled={!bot.credential}
                     className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
-                      isBotOnline
+                      !bot.credential
+                        ? 'opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border-border'
+                        : isBotOnline
                         ? 'bg-secondary hover:bg-secondary/80 text-muted-foreground border-border'
                         : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-600'
                     }`}
@@ -561,7 +570,7 @@ function BotFleetContent() {
                     ) : (
                       <>
                         <Power className="w-3 h-3" />
-                        <span>Go Online</span>
+                        <span>{!bot.credential ? 'No Token' : 'Go Online'}</span>
                       </>
                     )}
                   </button>
