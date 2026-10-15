@@ -25,8 +25,11 @@ export async function GET(request: NextRequest) {
   try {
     const clientId = process.env.DISCORD_CLIENT_ID!;
     const clientSecret = process.env.DISCORD_CLIENT_SECRET!;
+    const storedRedirectUri = request.cookies.get('oauth_redirect_uri')?.value;
     const redirectUri =
-      process.env.DISCORD_REDIRECT_URI || 'http://localhost:3000/api/auth/discord/callback';
+      storedRedirectUri ||
+      process.env.DISCORD_REDIRECT_URI ||
+      `${request.nextUrl.origin}/api/auth/discord/callback`;
 
     // Exchange code for token with Discord OAuth2
     const tokenResponse = await fetch('https://discord.com/api/v10/oauth2/token', {
@@ -174,6 +177,7 @@ export async function GET(request: NextRequest) {
       maxAge: 7 * 24 * 60 * 60,
     });
     response.cookies.delete('oauth_state');
+    response.cookies.delete('oauth_redirect_uri');
 
     await AuditService.record({
       workspaceId: defaultWorkspaceId,
