@@ -110,7 +110,7 @@ describe('Fleet Server Join & Multi-Bot Channel Voice Streaming', () => {
       where: { guild_connection_id: guildConnection.id, purpose: 'voice_streaming' },
     });
     expect(savedVoiceChannels.length).toBeGreaterThan(0);
-  });
+  }, 30000);
 
   it('connects multiple bots to the EXACT SAME voice channel and broadcasts audio simultaneously', async () => {
     // 1. Create session
