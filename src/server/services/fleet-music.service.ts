@@ -56,7 +56,7 @@ export class FleetMusicService {
   private async findYtDlp(): Promise<string> {
     if (this.ytdlBinaryPath) return this.ytdlBinaryPath;
 
-    const candidates = ['yt-dlp', '/home/roy/.local/bin/yt-dlp', 'python3'];
+    const candidates = ['/usr/local/bin/yt-dlp', 'yt-dlp', '/home/roy/.local/bin/yt-dlp', 'python3'];
     for (const candidate of candidates) {
       const isPython = candidate === 'python3';
       const checkArgs = isPython ? ['-m', 'yt_dlp', '--version'] : ['--version'];
@@ -116,92 +116,92 @@ export class FleetMusicService {
 
     const binary = await this.findYtDlp();
     const isPython = binary === 'python3';
-    const target = isUrl ? trimmed : `ytsearch1:${trimmed}`;
 
-    const args = isPython
-      ? [
-          '-m',
-          'yt_dlp',
-          '--no-warnings',
-          '-f',
-          'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best',
-          '--audio-quality',
-          '0',
-          '--print',
-          '%(title)s',
-          '--print',
-          '%(duration_string)s',
-          '--print',
-          '%(webpage_url)s',
-          '-g',
-          target,
-        ]
-      : [
-          '--no-warnings',
-          '-f',
-          'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best',
-          '--audio-quality',
-          '0',
-          '--print',
-          '%(title)s',
-          '--print',
-          '%(duration_string)s',
-          '--print',
-          '%(webpage_url)s',
-          '-g',
-          target,
-        ];
+    const executeSearch = (target: string): Promise<{
+      title: string;
+      duration: string;
+      webpageUrl: string;
+      streamUrl: string;
+    } | null> => {
+      const baseArgs = [
+        '--no-warnings',
+        '--ignore-errors',
+        '--max-downloads',
+        '1',
+        '-f',
+        'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best',
+        '--audio-quality',
+        '0',
+        '--print',
+        '%(title)s',
+        '--print',
+        '%(duration_string)s',
+        '--print',
+        '%(webpage_url)s',
+        '-g',
+        target,
+      ];
+      const args = isPython ? ['-m', 'yt_dlp', ...baseArgs] : baseArgs;
 
-    return new Promise((resolve, reject) => {
-      execFile(binary, args, { timeout: 20000 }, (error, stdout, stderr) => {
-        if (error) {
-          console.warn(`[FleetMusic] yt-dlp resolution error for "${query}":`, error.message, stderr);
-          // If direct URL failed in yt-dlp, try streaming URL directly via ffmpeg
-          if (isUrl) {
-            return resolve({
-              title: trimmed,
-              duration: 'Direct Stream',
-              webpageUrl: trimmed,
-              streamUrl: trimmed,
-            });
+      return new Promise((resolve) => {
+        execFile(binary, args, { timeout: 25000 }, (error, stdout) => {
+          const lines = (stdout || '')
+            .trim()
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter((l) => Boolean(l) && !l.startsWith('ERROR:') && !l.startsWith('WARNING:'));
+
+          if (lines.length >= 2) {
+            const streamUrl = lines.slice().reverse().find((l) => l.startsWith('http://') || l.startsWith('https://'));
+            if (streamUrl) {
+              const title = lines[0] || 'Unknown Title';
+              const duration =
+                lines[1] && (lines[1].includes(':') || /^\d+$/.test(lines[1])) ? lines[1] : 'Unknown';
+              const webpageUrl =
+                lines.find(
+                  (l) =>
+                    l.startsWith('http') &&
+                    (l.includes('youtube.com') || l.includes('youtu.be') || l.includes('soundcloud.com'))
+                ) || streamUrl;
+
+              return resolve({
+                title,
+                duration,
+                webpageUrl,
+                streamUrl,
+              });
+            }
           }
-          return reject(new Error(`Could not find audio for: ${query}`));
-        }
-
-        const lines = stdout
-          .trim()
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter(Boolean);
-
-        if (lines.length === 0) {
-          return reject(new Error(`No search results found for: ${query}`));
-        }
-
-        // Output lines format:
-        // [0] Title
-        // [1] Duration
-        // [2] Webpage URL
-        // [3] Stream URL (last line)
-        const title = lines[0] || 'Unknown Title';
-        const duration = lines[1] && (lines[1].includes(':') || /^\d+$/.test(lines[1])) ? lines[1] : 'Unknown';
-        const webpageUrl =
-          lines.find((l) => l.startsWith('http') && (l.includes('youtube.com') || l.includes('youtu.be') || l.includes('soundcloud.com'))) ||
-          (isUrl ? trimmed : `https://www.youtube.com/results?search_query=${encodeURIComponent(trimmed)}`);
-        const streamUrl = lines[lines.length - 1];
-
-        if (!streamUrl || !streamUrl.startsWith('http')) {
-          return reject(new Error(`Could not extract playable stream URL for: ${query}`));
-        }
-
-        resolve({
-          title,
-          duration,
-          webpageUrl,
-          streamUrl,
+          resolve(null);
         });
       });
-    });
+    };
+
+    if (isUrl) {
+      const res = await executeSearch(trimmed);
+      if (res) return res;
+      // Direct stream URL fallback for unlisted audio endpoints
+      return {
+        title: trimmed,
+        duration: 'Direct Stream',
+        webpageUrl: trimmed,
+        streamUrl: trimmed,
+      };
+    }
+
+    // 1. Try SoundCloud first (most reliable on datacenter IPs, zero bot challenges)
+    let result = await executeSearch(`scsearch5:${trimmed}`);
+    if (result) return result;
+
+    // 2. Try YouTube search
+    result = await executeSearch(`ytsearch1:${trimmed}`);
+    if (result) return result;
+
+    // 3. Try broader SoundCloud search
+    result = await executeSearch(`scsearch10:${trimmed}`);
+    if (result) return result;
+
+    throw new Error(`Could not find audio for: ${query}`);
   }
 
   /**
