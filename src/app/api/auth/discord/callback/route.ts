@@ -3,7 +3,28 @@ import { prisma } from '@/server/db/prisma';
 import { signSessionToken, COOKIE_NAME } from '@/server/security/jwt';
 import { AuditService } from '@/server/services/audit.service';
 
+function getBaseUrl(request: NextRequest): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL;
+  if (configured && !configured.includes('0.0.0.0')) {
+    return configured.replace(/\/$/, '');
+  }
+
+  const proto = request.headers.get('x-forwarded-proto') || 'https';
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
+  if (host && !host.includes('0.0.0.0')) {
+    return `${proto}://${host}`;
+  }
+
+  const origin = request.nextUrl.origin;
+  if (origin && !origin.includes('0.0.0.0')) {
+    return origin;
+  }
+
+  return 'https://comes-dice-apollo-hired.trycloudflare.com';
+}
+
 export async function GET(request: NextRequest) {
+  const baseUrl = getBaseUrl(request);
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
@@ -12,13 +33,13 @@ export async function GET(request: NextRequest) {
   // CSRF validation
   if (!state || !storedState || state !== storedState) {
     return NextResponse.redirect(
-      new URL('/login?error=OAUTH_STATE_MISMATCH', request.url)
+      new URL('/login?error=OAUTH_STATE_MISMATCH', baseUrl)
     );
   }
 
   if (!code) {
     return NextResponse.redirect(
-      new URL('/login?error=MISSING_AUTHORIZATION_CODE', request.url)
+      new URL('/login?error=MISSING_AUTHORIZATION_CODE', baseUrl)
     );
   }
 
@@ -49,7 +70,7 @@ export async function GET(request: NextRequest) {
     if (!tokenResponse.ok) {
       console.error('[OAuth2] Token exchange error:', await tokenResponse.text());
       return NextResponse.redirect(
-        new URL('/login?error=DISCORD_TOKEN_EXCHANGE_FAILED', request.url)
+        new URL('/login?error=DISCORD_TOKEN_EXCHANGE_FAILED', baseUrl)
       );
     }
 
@@ -63,7 +84,7 @@ export async function GET(request: NextRequest) {
 
     if (!userRes.ok) {
       return NextResponse.redirect(
-        new URL('/login?error=DISCORD_USER_FETCH_FAILED', request.url)
+        new URL('/login?error=DISCORD_USER_FETCH_FAILED', baseUrl)
       );
     }
 
@@ -168,7 +189,7 @@ export async function GET(request: NextRequest) {
       defaultWorkspaceId,
     });
 
-    const response = NextResponse.redirect(new URL('/', request.url));
+    const response = NextResponse.redirect(new URL('/', baseUrl));
     response.cookies.set(COOKIE_NAME, sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -192,7 +213,7 @@ export async function GET(request: NextRequest) {
   } catch (err: any) {
     console.error('[OAuth Callback Exception]:', err);
     return NextResponse.redirect(
-      new URL('/login?error=AUTHENTICATION_FAILED', request.url)
+      new URL('/login?error=AUTHENTICATION_FAILED', baseUrl)
     );
   }
 }

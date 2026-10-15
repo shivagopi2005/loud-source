@@ -5,7 +5,8 @@ import { mediaGateway } from './voice/media-gateway';
 import { startWorkers } from './jobs/worker';
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = process.env.HOST || '0.0.0.0';
+const listenHost = process.env.HOST || '0.0.0.0';
+const hostname = process.env.HOSTNAME || 'localhost';
 const port = parseInt(process.env.PORT || '3000', 10);
 const mediaPort = parseInt(process.env.MEDIA_GATEWAY_PORT || '3001', 10);
 
@@ -52,8 +53,8 @@ async function bootstrap() {
     }
   });
 
-  server.listen(port, hostname, () => {
-    console.log(`> Ready on http://${hostname}:${port}`);
+  server.listen(port, listenHost, () => {
+    console.log(`> Ready on http://${listenHost}:${port}`);
   });
 
   // 3. Attach Media Gateway WebSocket server
