@@ -1,0 +1,21 @@
+[Unit]
+Description=Loud Voice Studio & Multi-Bot Fleet Controller
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=roy
+WorkingDirectory=/home/roy/Documents/test bots/loud
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=loud-studio
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=MEDIA_GATEWAY_PORT=3001
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

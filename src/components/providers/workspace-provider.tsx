@@ -71,10 +71,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } else {
-        // Automatically attempt dev-login if in development mode and unauthenticated
-        const devLoginRes = await fetch('/api/auth/dev-login', { method: 'POST' });
-        if (devLoginRes.ok) {
-          return fetchSessionData();
+        // If unauthenticated, redirect to /login
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login';
         }
       }
     } catch (err) {

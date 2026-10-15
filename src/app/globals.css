@@ -3,56 +3,62 @@
 @tailwind utilities;
 
 :root {
-  --background: 224 71% 4%;
-  --foreground: 210 40% 98%;
-  --card: 224 71% 7%;
-  --card-foreground: 210 40% 98%;
-  --popover: 224 71% 6%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 235 86% 65%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 222 47% 14%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 223 47% 11%;
-  --muted-foreground: 215 20% 65%;
-  --accent: 224 71% 12%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 222 47% 14%;
-  --input: 222 47% 14%;
+  /* Human-engineered SaaS dark theme inspired by Discord & Linear */
+  --background: 228 12% 8%;       /* #111318 - Deep comfortable dark slate */
+  --foreground: 220 14% 96%;      /* #F1F3F9 - Crisp primary text */
+  --card: 228 12% 11%;            /* #161920 - Clean container card */
+  --card-foreground: 220 14% 96%;
+  --popover: 228 12% 10%;         /* #14161D */
+  --popover-foreground: 220 14% 96%;
+  --primary: 235 86% 65%;         /* #5865F2 - Discord Blurple */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 228 10% 15%;       /* #21252E - Subtle interaction surface */
+  --secondary-foreground: 220 14% 94%;
+  --muted: 228 10% 13%;           /* #1C1F27 */
+  --muted-foreground: 220 10% 62%;/* #9398A7 - Calm readable secondary text */
+  --accent: 235 86% 65%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 350 89% 60%;     /* Clean warning red */
+  --destructive-foreground: 0 0% 100%;
+  --border: 228 10% 18%;          /* #292D38 - Crisp 1px borders */
+  --input: 228 10% 16%;           /* #242832 */
   --ring: 235 86% 65%;
-  --radius: 0.625rem;
+  --radius: 0.5rem;               /* 8px clean modern radius */
 }
 
 body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
   font-feature-settings: "rlig" 1, "calt" 1;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom scrollbars for studio dark theme */
+/* Subtle, polished human scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(var(--background));
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--secondary));
-  border-radius: 3px;
+  background: hsl(var(--border));
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--primary) / 0.5);
+  background: hsl(var(--muted-foreground) / 0.5);
 }
 
-/* LED audio meter pulse animations */
-@keyframes meter-flicker {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.85; }
+/* Interactive focus ring */
+:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 1px;
 }
 
-.animate-meter {
-  animation: meter-flicker 0.4s ease-in-out infinite;
+/* Discord styled typography and helper classes */
+.discord-tag {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  letter-spacing: 0.02em;
 }

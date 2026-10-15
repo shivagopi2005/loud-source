@@ -70,6 +70,7 @@ export async function POST(
       displayName: string;
       applicationId: string;
       error: string;
+      inviteUrl?: string;
     }> = [];
 
     let resolvedGuildName = `Guild ${data.guildId}`;
@@ -81,6 +82,7 @@ export async function POST(
           displayName: bot.display_name,
           applicationId: bot.application_id,
           error: 'No active credentials on file',
+          inviteUrl: DiscordBotService.generateInstallUrl(bot.application_id, '0', data.guildId),
         });
         continue;
       }
@@ -102,6 +104,7 @@ export async function POST(
           displayName: bot.display_name,
           applicationId: bot.application_id,
           error: err.message || 'Membership verification failed',
+          inviteUrl: DiscordBotService.generateInstallUrl(bot.application_id, '0', data.guildId),
         });
       }
     }

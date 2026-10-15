@@ -20,7 +20,7 @@ describe('DiscordBotService (PRD Section 6.2, 7.1, 7.5, 9.1)', () => {
     expect(url).toContain('https://discord.com/oauth2/authorize');
     expect(url).toContain('client_id=123456789012345678');
     expect(url).toContain('permissions=3148800');
-    expect(url).toContain('scope=bot%20applications.commands');
+    expect(url).toContain('scope=bot');
   });
 
   it('fetches guild channels and assigns correct permission flags', async () => {

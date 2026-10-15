@@ -60,6 +60,7 @@ export async function GET(
     return okResponse(
       bots.map((b) => {
         const isOnline = FleetGatewayService.isBotOnline(b.id) || b.status === 'connected';
+        const liveGuildIds = FleetGatewayService.getBotGuildIds(b.id);
         return {
           id: b.id,
           applicationId: b.application_id,
@@ -67,10 +68,17 @@ export async function GET(
           verifiedBotUserId: b.verified_bot_user_id,
           status: isOnline ? 'connected' : b.status,
           online: isOnline,
+          liveGuildIds,
           lastHealthCheckAt: b.last_health_check_at,
-        tags: b.tags,
-        operationalRole: b.operational_role,
-        createdAt: b.created_at,
+          tags: b.tags,
+          operationalRole: b.operational_role,
+          avatarUrl: b.avatar_url,
+          bannerUrl: b.banner_url,
+          bio: b.bio,
+          customStatus: b.custom_status,
+          activityType: b.activity_type,
+          accentColor: b.accent_color,
+          createdAt: b.created_at,
         credential: b.credentials[0]
           ? {
               id: b.credentials[0].id,

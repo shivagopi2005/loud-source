@@ -82,6 +82,12 @@ model BotApplication {
   last_health_check_at DateTime?
   tags                 String[]          @default([])
   operational_role     String?           @default("voice_operator")
+  avatar_url           String?
+  banner_url           String?
+  bio                  String?
+  custom_status        String?
+  activity_type        String?           @default("PLAYING")
+  accent_color         String?
   created_at           DateTime          @default(now())
   updated_at           DateTime          @updatedAt
 

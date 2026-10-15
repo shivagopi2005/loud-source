@@ -1,12 +1,37 @@
+import 'dotenv/config';
 import http from 'http';
 import next from 'next';
 import { mediaGateway } from './voice/media-gateway';
 import { startWorkers } from './jobs/worker';
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = 'localhost';
+const hostname = process.env.HOST || '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
 const mediaPort = parseInt(process.env.MEDIA_GATEWAY_PORT || '3001', 10);
+
+process.on('uncaughtException', (err: any) => {
+  if (
+    err?.code === 'ERR_SOCKET_DGRAM_NOT_RUNNING' ||
+    err?.message?.includes('socket closed') ||
+    err?.message?.includes('Cannot perform IP discovery')
+  ) {
+    console.warn('[UDP Socket Warning (Ignored)]:', err.message);
+    return;
+  }
+  console.error('[Server Uncaught Exception]:', err);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  if (
+    reason?.code === 'ERR_SOCKET_DGRAM_NOT_RUNNING' ||
+    reason?.message?.includes('socket closed') ||
+    reason?.message?.includes('Cannot perform IP discovery')
+  ) {
+    console.warn('[UDP Rejection Warning (Ignored)]:', reason.message);
+    return;
+  }
+  console.warn('[Server Unhandled Rejection]:', reason?.message || reason);
+});
 
 async function bootstrap() {
   console.log(`[Bootstrap] Starting Multi-Bot Voice Studio (Node.js ${process.version})...`);
@@ -27,7 +52,7 @@ async function bootstrap() {
     }
   });
 
-  server.listen(port, () => {
+  server.listen(port, hostname, () => {
     console.log(`> Ready on http://${hostname}:${port}`);
   });
 

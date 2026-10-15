@@ -12,3 +12,6 @@ build/
 postgres_data/
 redis_data/
 coverage/
+*.tsbuildinfo
+logs/
+scratch/

@@ -69,9 +69,10 @@ export async function POST(
     });
 
     if (!targetUser) {
+      const isSnowflake = /^\d{17,20}$/.test(data.usernameOrDiscordId);
       targetUser = await prisma.user.create({
         data: {
-          discord_id: `disc_${Date.now()}`,
+          discord_id: isSnowflake ? data.usernameOrDiscordId : `disc_${Date.now()}`,
           username: data.usernameOrDiscordId,
         },
       });

@@ -1,6 +1,7 @@
 import { Client, GatewayIntentBits, ActivityType } from 'discord.js';
 import { prisma } from '../db/prisma';
 import { decryptSecret } from '../security/encryption';
+import { BotCommandService } from './bot-command.service';
 
 export interface BotGatewayConnection {
   botId: string;
@@ -13,8 +14,18 @@ export interface BotGatewayConnection {
   pingMs?: number;
 }
 
+declare global {
+  // eslint-disable-next-line no-var
+  var __fleetGatewayConnections: Map<string, BotGatewayConnection> | undefined;
+}
+
 export class FleetGatewayService {
-  private static connections = new Map<string, BotGatewayConnection>();
+  private static get connections(): Map<string, BotGatewayConnection> {
+    if (!global.__fleetGatewayConnections) {
+      global.__fleetGatewayConnections = new Map<string, BotGatewayConnection>();
+    }
+    return global.__fleetGatewayConnections;
+  }
 
   /**
    * Retrieve active Discord Client for a bot if currently connected.
@@ -22,6 +33,22 @@ export class FleetGatewayService {
   public static getClient(botId: string): Client | null {
     const conn = this.connections.get(botId);
     return conn?.client || null;
+  }
+
+  /**
+   * Retrieve all active gateway connections.
+   */
+  public static getAllConnections(): BotGatewayConnection[] {
+    return Array.from(this.connections.values());
+  }
+
+  /**
+   * Retrieve all active Discord Clients across the fleet.
+   */
+  public static getAllClients(): Client[] {
+    return Array.from(this.connections.values())
+      .map((c) => c.client)
+      .filter((c): c is Client => Boolean(c));
   }
 
   /**
@@ -77,14 +104,24 @@ export class FleetGatewayService {
         intents: [
           GatewayIntentBits.Guilds,
           GatewayIntentBits.GuildVoiceStates,
+          GatewayIntentBits.GuildMessages,
+          GatewayIntentBits.MessageContent,
+          GatewayIntentBits.DirectMessages,
         ],
+      });
+
+      // Attach prefix message listener (!dm, !status, !join, !leave, !fleet, etc.)
+      client.on('messageCreate', (message) => {
+        BotCommandService.handleMessage(client, botId, message).catch((err) =>
+          console.error(`[FleetGateway] Error in messageCreate for bot ${botId}:`, err)
+        );
       });
 
       const loginPromise = new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => {
           console.warn(`[FleetGateway] Connection timeout for bot ${botId}`);
           resolve(false);
-        }, 15000);
+        }, 30000);
 
         client.once('ready', async () => {
           clearTimeout(timeout);
@@ -93,7 +130,7 @@ export class FleetGatewayService {
               status: 'online',
               activities: [
                 {
-                  name: 'Studio Voice Fleet',
+                  name: 'Studio Voice Fleet • !help',
                   type: ActivityType.Custom,
                 },
               ],
@@ -115,7 +152,8 @@ export class FleetGatewayService {
               data: { status: 'connected', last_health_check_at: new Date() },
             });
 
-            console.log(`[FleetGateway] Bot ${client.user?.tag} (${botId}) is now ONLINE in Discord!`);
+            console.log(`[FleetGateway] Bot ${client.user?.tag} (${botId}) is now ONLINE in Discord (!prefix commands enabled)`);
+
             resolve(true);
           } catch (readyErr) {
             console.error(`[FleetGateway] Error in ready handler for bot ${botId}:`, readyErr);
@@ -155,10 +193,19 @@ export class FleetGatewayService {
         isMock: false,
       });
 
+      const isInvalidToken =
+        err.message?.includes('TOKEN_INVALID') ||
+        err.message?.includes('401') ||
+        err.code === 'TokenInvalid' ||
+        err.message?.includes('An invalid token was provided');
+
       try {
         await prisma.botApplication.update({
           where: { id: botId },
-          data: { status: 'credential_invalid', last_health_check_at: new Date() },
+          data: {
+            status: isInvalidToken ? 'credential_invalid' : 'disconnected',
+            last_health_check_at: new Date(),
+          },
         });
       } catch {}
 
@@ -258,7 +305,10 @@ export class FleetGatewayService {
   public static async autoConnectAll(): Promise<void> {
     try {
       const bots = await prisma.botApplication.findMany({
-        where: { status: { in: ['ready', 'connected'] } },
+        where: {
+          status: { notIn: ['removed', 'disabled'] },
+          display_name: { not: 'Integration Test Bot' },
+        },
         include: {
           credentials: {
             where: { status: 'active' },
@@ -268,15 +318,16 @@ export class FleetGatewayService {
         },
       });
 
-      console.log(`[FleetGateway] Auto-connecting ${bots.length} registered bot(s) to Discord Gateway...`);
+      console.log(`[FleetGateway] Auto-connecting ${bots.length} registered bot(s) to Discord Gateway (staggered 400ms)...`);
       for (const bot of bots) {
         if (bot.credentials.length > 0) {
           try {
             const token = decryptSecret(bot.credentials[0].secret_reference);
-            // Non-blocking connection per bot
             this.connectBot(bot.id, token).catch((err) => {
               console.warn(`[FleetGateway] Auto-connect error for ${bot.display_name}:`, err.message);
             });
+            // Stagger bot logins by 400ms so Discord API does not rate-limit or timeout
+            await new Promise((r) => setTimeout(r, 400));
           } catch {}
         }
       }
@@ -291,6 +342,24 @@ export class FleetGatewayService {
   public static isBotOnline(botId: string): boolean {
     const conn = this.connections.get(botId);
     return !!(conn && conn.status === 'connected');
+  }
+
+  /**
+   * Check if a bot client is connected and present in a specific guild.
+   */
+  public static isBotInGuild(botId: string, guildId: string): boolean {
+    const conn = this.connections.get(botId);
+    if (!conn?.client || !conn.client.isReady()) return false;
+    return conn.client.guilds.cache.has(guildId);
+  }
+
+  /**
+   * Get all guild IDs that the connected bot client is currently in.
+   */
+  public static getBotGuildIds(botId: string): string[] {
+    const conn = this.connections.get(botId);
+    if (!conn?.client || !conn.client.isReady()) return [];
+    return Array.from(conn.client.guilds.cache.keys());
   }
 
   /**

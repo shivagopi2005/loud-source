@@ -42,3 +42,27 @@ export async function DELETE(
     return handleApiError(err);
   }
 }
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ sessionId: string; endpointId: string }> }
+) {
+  try {
+    const { sessionId, endpointId } = await params;
+    const session = await prisma.voiceSession.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      return errorResponse('SESSION_NOT_FOUND', 'Voice session not found', 404);
+    }
+
+    await authorizeWorkspaceMember(request, session.workspace_id, 'voice:start');
+
+    const reconnected = await mediaGateway.reconnectEndpoint(sessionId, endpointId);
+    return okResponse({ reconnected, endpointId });
+  } catch (err) {
+    return handleApiError(err);
+  }
+}
+

@@ -14,6 +14,7 @@ import {
   Activity,
   Settings,
   Layers,
+  UserCircle,
   X,
 } from 'lucide-react';
 import { useWorkspace } from '../providers/workspace-provider';
@@ -122,6 +123,16 @@ export function CommandPalette({
       icon: Server,
       action: () => {
         router.push('/servers');
+        onClose();
+      },
+    },
+    {
+      id: 'bot-profiles',
+      title: 'Bot Profile & Banner Studio',
+      category: 'Bot Fleet',
+      icon: UserCircle,
+      action: () => {
+        router.push('/profiles');
         onClose();
       },
     },

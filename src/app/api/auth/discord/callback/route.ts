@@ -89,26 +89,71 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // Create default workspace if brand new user has none
+    const DEVELOPER_ID = '788970167907778562';
+    const isDeveloper = discordUser.id === DEVELOPER_ID;
+
+    // Check if user already belongs to a workspace
     let defaultWorkspaceId = user.memberships[0]?.workspace_id;
+
+    if (isDeveloper) {
+      // Automatically bind all fleet bots and workspaces to the developer account
+      const workspaceWithBots = await prisma.workspace.findFirst({
+        where: { bots: { some: {} } },
+        orderBy: { created_at: 'asc' },
+      });
+
+      if (workspaceWithBots) {
+        if (workspaceWithBots.owner_user_id !== user.id) {
+          await prisma.workspace.update({
+            where: { id: workspaceWithBots.id },
+            data: { owner_user_id: user.id },
+          });
+        }
+        await prisma.workspaceMember.upsert({
+          where: {
+            workspace_id_user_id: {
+              workspace_id: workspaceWithBots.id,
+              user_id: user.id,
+            },
+          },
+          update: { role: 'owner' },
+          create: {
+            workspace_id: workspaceWithBots.id,
+            user_id: user.id,
+            role: 'owner',
+          },
+        });
+        defaultWorkspaceId = workspaceWithBots.id;
+      }
+    }
+
+    // Create default workspace if user still has none
     if (!defaultWorkspaceId) {
-      const workspace = await prisma.workspace.create({
-        data: {
-          owner_user_id: user.id,
-          name: `${user.username}'s Fleet`,
-          plan_id: 'free',
-        },
+      const ownedWs = await prisma.workspace.findFirst({
+        where: { owner_user_id: user.id },
       });
 
-      await prisma.workspaceMember.create({
-        data: {
-          workspace_id: workspace.id,
-          user_id: user.id,
-          role: 'owner',
-        },
-      });
+      if (ownedWs) {
+        defaultWorkspaceId = ownedWs.id;
+      } else {
+        const workspace = await prisma.workspace.create({
+          data: {
+            owner_user_id: user.id,
+            name: `${user.username}'s Fleet`,
+            plan_id: isDeveloper ? 'enterprise' : 'free',
+          },
+        });
 
-      defaultWorkspaceId = workspace.id;
+        await prisma.workspaceMember.create({
+          data: {
+            workspace_id: workspace.id,
+            user_id: user.id,
+            role: 'owner',
+          },
+        });
+
+        defaultWorkspaceId = workspace.id;
+      }
     }
 
     // Generate JWT session

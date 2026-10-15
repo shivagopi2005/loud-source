@@ -351,10 +351,14 @@ export class DiscordBotService {
 
   /**
    * Generate official Discord installation URL for bot.
-   * Permissions bitfield: 3148800 (ViewChannel, SendMessages, Connect, Speak, UseVAD)
+   * Permissions bitfield: '0' (no special elevated permissions requested; joins like a human user with default @everyone permissions).
    */
-  static generateInstallUrl(applicationId: string, permissions = '3148800'): string {
-    const scopes = encodeURIComponent('bot applications.commands');
-    return `https://discord.com/oauth2/authorize?client_id=${applicationId}&permissions=${permissions}&scope=${scopes}`;
+  static generateInstallUrl(applicationId: string, permissions = '0', guildId?: string): string {
+    const scopes = encodeURIComponent('bot');
+    let url = `https://discord.com/oauth2/authorize?client_id=${applicationId}&permissions=${permissions}&scope=${scopes}`;
+    if (guildId) {
+      url += `&guild_id=${guildId}&disable_guild_select=true`;
+    }
+    return url;
   }
 }

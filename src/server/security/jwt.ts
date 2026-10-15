@@ -1,8 +1,14 @@
 import jwt from 'jsonwebtoken';
 import { serialize, parse } from 'cookie';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'loud_fallback_jwt_secret_must_override';
-const MEDIA_SESSION_SECRET = process.env.MEDIA_SESSION_SECRET || 'loud_media_session_secret_key';
+function getJwtSecret(): string {
+  return process.env.JWT_SECRET || 'loud_fallback_jwt_secret_must_override';
+}
+
+function getMediaSessionSecret(): string {
+  return process.env.MEDIA_SESSION_SECRET || process.env.JWT_SECRET || 'loud_media_session_secret_key';
+}
+
 export const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'loud_session';
 
 export interface UserSessionPayload {
@@ -28,7 +34,7 @@ export function signSessionToken(
   payload: UserSessionPayload,
   expiresIn: jwt.SignOptions['expiresIn'] = '7d'
 ): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn });
 }
 
 /**
@@ -36,7 +42,7 @@ export function signSessionToken(
  */
 export function verifySessionToken(token: string): UserSessionPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as UserSessionPayload;
+    return jwt.verify(token, getJwtSecret()) as UserSessionPayload;
   } catch {
     return null;
   }
@@ -47,7 +53,8 @@ export function verifySessionToken(token: string): UserSessionPayload | null {
  * Expires in 15 minutes.
  */
 export function signMediaSessionToken(payload: Omit<MediaSessionPayload, 'type'>): string {
-  return jwt.sign({ ...payload, type: 'media_stream' }, MEDIA_SESSION_SECRET, {
+  const secret = getMediaSessionSecret();
+  return jwt.sign({ ...payload, type: 'media_stream' }, secret, {
     expiresIn: '15m' as jwt.SignOptions['expiresIn'],
   });
 }
@@ -56,11 +63,22 @@ export function signMediaSessionToken(payload: Omit<MediaSessionPayload, 'type'>
  * Verify media stream token.
  */
 export function verifyMediaSessionToken(token: string): MediaSessionPayload | null {
+  const primarySecret = getMediaSessionSecret();
   try {
-    const decoded = jwt.verify(token, MEDIA_SESSION_SECRET) as MediaSessionPayload;
+    const decoded = jwt.verify(token, primarySecret) as MediaSessionPayload;
     if (decoded.type !== 'media_stream') return null;
     return decoded;
-  } catch {
+  } catch (primaryErr: any) {
+    // Also try secondary/fallback secret in case of secret reload discrepancy
+    const fallbacks = ['loud_media_session_secret_key', process.env.JWT_SECRET].filter(Boolean) as string[];
+    for (const fb of fallbacks) {
+      if (fb === primarySecret) continue;
+      try {
+        const decoded = jwt.verify(token, fb) as MediaSessionPayload;
+        if (decoded.type === 'media_stream') return decoded;
+      } catch {}
+    }
+    console.warn(`[verifyMediaSessionToken] Failed to verify token:`, primaryErr?.message);
     return null;
   }
 }

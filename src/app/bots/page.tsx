@@ -362,34 +362,31 @@ function BotFleetContent() {
       </div>
 
       {/* FLEET GATEWAY STATUS & BRING ONLINE BAR */}
-      <div className="p-4 rounded-xl bg-card border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-center space-x-3.5">
-          <div className="relative">
+      <div className="p-3.5 rounded-lg bg-card border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+        <div className="flex items-center space-x-3">
+          <div className="flex items-center justify-center">
             <div
-              className={`w-3.5 h-3.5 rounded-full ${
-                onlineBotsCount > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/50'
+              className={`w-3 h-3 rounded-full ${
+                onlineBotsCount > 0 ? 'bg-emerald-500' : 'bg-muted-foreground/40'
               }`}
-            ></div>
-            {onlineBotsCount > 0 && (
-              <div className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-75"></div>
-            )}
+            />
           </div>
 
           <div>
-            <div className="text-xs font-bold text-foreground flex items-center gap-2">
+            <div className="text-xs font-semibold text-foreground flex items-center gap-2">
               <span>Discord Gateway Fleet Status:</span>
               <span
-                className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold ${
+                className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium ${
                   onlineBotsCount > 0
                     ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                     : 'bg-secondary text-muted-foreground border border-border'
                 }`}
               >
-                {onlineBotsCount} of {bots.length} Bots Online in Discord
+                {onlineBotsCount} of {bots.length} Bots Online
               </span>
             </div>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Online bots maintain a live Discord Gateway heartbeat and show green online status in your server.
+              Connected bots maintain active Gateway WebSocket connections and respond to prefix commands.
             </p>
           </div>
         </div>
@@ -398,16 +395,16 @@ function BotFleetContent() {
           <button
             onClick={handleBringFleetOnline}
             disabled={isFleetConnecting || bots.length === 0}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition disabled:opacity-50"
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-sm transition disabled:opacity-50"
           >
             <Wifi className={`w-3.5 h-3.5 ${isFleetConnecting ? 'animate-spin' : ''}`} />
-            <span>{isFleetConnecting ? 'Connecting...' : 'Bring All Bots Online'}</span>
+            <span>{isFleetConnecting ? 'Connecting...' : 'Bring All Online'}</span>
           </button>
 
           <button
             onClick={handleDisconnectFleet}
             disabled={isFleetConnecting || onlineBotsCount === 0}
-            className="flex items-center space-x-1.5 px-3 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-xs font-medium border border-border transition disabled:opacity-50"
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-xs font-medium border border-border transition disabled:opacity-50"
           >
             <PowerOff className="w-3.5 h-3.5" />
             <span>Disconnect Fleet</span>

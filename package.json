@@ -10,8 +10,11 @@
     "db:migrate": "prisma migrate dev --name init",
     "db:generate": "prisma generate",
     "db:seed": "tsx src/server/db/seed.ts",
+    "db:migrate-developer": "node scripts/migrate-to-developer.js",
+    "setup": "bash setup.sh",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "node scripts/patch-opusscript.js"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",

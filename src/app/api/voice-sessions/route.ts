@@ -30,6 +30,16 @@ const CreateVoiceSessionSchema = z.object({
       inputGain: z.number().default(1.0),
     })
     .default({}),
+  audioConfig: z
+    .object({
+      sampleRate: z.number().optional(),
+      channels: z.number().optional(),
+      noiseSuppression: z.boolean().optional(),
+      highPassFilter: z.boolean().optional(),
+      compressor: z.boolean().optional(),
+      inputGain: z.number().optional(),
+    })
+    .optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -103,7 +113,8 @@ export async function POST(request: NextRequest) {
       });
 
       if (!bot || !bot.credentials.length) {
-        throw new Error(`Bot ${dest.botId} does not have an active credential`);
+        console.warn(`[CreateVoiceSession] Bot ${dest.botId} does not have an active credential, skipping.`);
+        continue;
       }
 
       const rawGuildId = dest.guildConnectionId.trim();
@@ -201,6 +212,14 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // Check if bot is connected and known to NOT be in the guild
+      const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
+      const client = FleetGatewayService.getClient(bot.id);
+      if (client && client.isReady() && !client.guilds.cache.has(guild.guild_id)) {
+        console.warn(`[CreateVoiceSession] Bot ${bot.display_name} (${bot.id}) is not in guild ${guild.guild_id}, skipping.`);
+        continue;
+      }
+
       const token = decryptSecret(bot.credentials[0].secret_reference);
 
       const endpoint = await prisma.voiceEndpoint.create({
@@ -222,12 +241,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (endpointConfigs.length === 0) {
+      return errorResponse(
+        'NO_VALID_BOTS',
+        'None of the selected bots are members of this Discord server. Please verify your bots have joined this server.',
+        400
+      );
+    }
+
+    const rawInitialGain = data.audioConfig?.inputGain ?? data.audioConfiguration?.inputGain;
+    const initialGain = typeof rawInitialGain === 'number' && !isNaN(rawInitialGain) ? rawInitialGain : 1.0;
+
     // Initialize on MediaGateway
     await mediaGateway.createSession(
       dbSession.id,
       data.workspaceId,
       user.userId,
-      endpointConfigs
+      endpointConfigs,
+      initialGain
     );
 
     // Issue short-lived Media Session Token for WebRTC/WebSocket streaming
