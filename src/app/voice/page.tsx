@@ -41,6 +41,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
+import { getCachedData, setCachedData } from '@/lib/client-cache';
 
 interface VoiceDestination {
   id: string;
@@ -280,6 +281,27 @@ export default function LiveVoiceStudioPage() {
   // Load available voice channels and bots for workspace
   const loadDestinations = async () => {
     if (!currentWorkspace) return;
+
+    const cacheKeyGuilds = `workspace:${currentWorkspace.id}:guilds`;
+    const cacheKeyBots = `workspace:${currentWorkspace.id}:bots`;
+
+    const cachedGuilds = getCachedData<any[]>(cacheKeyGuilds);
+    const cachedBots = getCachedData<any[]>(cacheKeyBots);
+    if (cachedGuilds && cachedGuilds.length > 0) {
+      setGuildsList(cachedGuilds);
+    }
+    if (cachedBots && cachedBots.length > 0) {
+      const readyCachedBots = cachedBots.filter(
+        (b: any) =>
+          (b.status === 'ready' || b.status === 'connected' || b.online) &&
+          b.displayName !== 'Integration Test Bot'
+      );
+      setBotsList(readyCachedBots);
+      if (selectedFleetBotIds.length === 0 && readyCachedBots.length > 0) {
+        setSelectedFleetBotIds(readyCachedBots.map((b: any) => b.id));
+      }
+    }
+
     try {
       const [guildsRes, botsRes] = await Promise.all([
         fetch(`/api/workspaces/${currentWorkspace.id}/guilds`),
@@ -300,6 +322,8 @@ export default function LiveVoiceStudioPage() {
 
         setGuildsList(guilds);
         setBotsList(readyBots);
+        setCachedData(cacheKeyGuilds, guilds, 15000);
+        setCachedData(cacheKeyBots, rawBots, 15000);
 
         // Auto-select guild for fleet mode (prefer WILD SECTOR if available)
         if (guilds.length > 0) {
@@ -1782,7 +1806,10 @@ export default function LiveVoiceStudioPage() {
           )}
 
           <button
-            onClick={triggerEmergencyStop}
+            onClick={() => {
+              handleLocalEmergencyHalt();
+              triggerEmergencyStop();
+            }}
             className="flex items-center space-x-1.5 px-4 py-2.5 rounded-lg bg-destructive hover:bg-destructive/90 text-white font-bold text-xs uppercase shadow-lg shadow-destructive/20 transition active:scale-95"
           >
             <AlertOctagon className="w-4 h-4" />

@@ -3,6 +3,7 @@ import { prisma } from '@/server/db/prisma';
 import { authorizeWorkspaceMember } from '@/server/security/rbac';
 import { okResponse, handleApiError, errorResponse } from '@/server/utils/api-response';
 import { mediaGateway } from '@/server/voice/media-gateway';
+import { FleetGatewayService } from '@/server/services/fleet-gateway.service';
 import { realtimeBroadcaster } from '@/server/realtime/events';
 
 export async function POST(
@@ -25,8 +26,11 @@ export async function POST(
       'voice:emergency_stop'
     );
 
-    // Trigger immediate emergency halt across gateway, audio feeds, and voice workers
-    await mediaGateway.emergencyStop(sessionId, 'emergency_stop');
+    // Trigger immediate emergency halt across gateway, audio feeds, and all Discord bots in parallel
+    await Promise.allSettled([
+      mediaGateway.emergencyStop(sessionId, 'emergency_stop'),
+      FleetGatewayService.forceDisconnectAllVoice(),
+    ]);
 
     // Broadcast emergency stop event to all listeners in this workspace
     realtimeBroadcaster.broadcast(session.workspace_id, 'voice.emergency_stop', {

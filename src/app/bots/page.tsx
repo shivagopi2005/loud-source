@@ -24,6 +24,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
+import { getCachedData, setCachedData } from '@/lib/client-cache';
 
 function BotFleetContent() {
   const router = useRouter();
@@ -80,12 +81,20 @@ function BotFleetContent() {
 
   const loadBots = async () => {
     if (!currentWorkspace) return;
+    const cacheKey = `workspace:${currentWorkspace.id}:bots`;
+    const cached = getCachedData<any[]>(cacheKey);
+    if (cached && cached.length > 0) {
+      setBots(cached);
+      setIsLoading(false);
+    }
     try {
-      setIsLoading(true);
       const res = await fetch(`/api/workspaces/${currentWorkspace.id}/bots`);
       if (res.ok) {
         const json = await res.json();
-        if (json.data) setBots(json.data);
+        if (json.data) {
+          setBots(json.data);
+          setCachedData(cacheKey, json.data, 15000);
+        }
       }
     } catch (err) {
       console.error('Failed to load bots:', err);

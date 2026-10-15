@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   LayoutDashboard,
   Bot,
@@ -125,8 +126,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
 
           {/* Brand Logo */}
-          <div
-            onClick={() => router.push('/')}
+          <Link
+            href="/"
+            prefetch={true}
             className="flex items-center space-x-2.5 cursor-pointer select-none group"
           >
             <div className="w-7 h-7 rounded-md bg-[#5865F2] flex items-center justify-center text-white shadow-sm font-black text-xs tracking-wider">
@@ -140,7 +142,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 Studio
               </span>
             </div>
-          </div>
+          </Link>
 
           {/* Workspace Switcher */}
           <div className="hidden sm:flex items-center pl-3 border-l border-border ml-1">
@@ -172,13 +174,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Active Voice Pill */}
           {activeVoiceSession && (
-            <div
-              onClick={() => router.push('/voice')}
+            <Link
+              href="/voice"
+              prefetch={true}
               className="cursor-pointer flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium hover:bg-emerald-500/15 transition"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
               <span className="text-[11px] font-semibold">VOICE LIVE</span>
-            </div>
+            </Link>
           )}
 
           {/* Emergency Stop Button */}
@@ -224,26 +227,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </div>
                 </div>
                 <div className="py-1">
-                  <button
-                    onClick={() => {
-                      setIsUserMenuOpen(false);
-                      router.push('/profiles');
-                    }}
+                  <Link
+                    href="/profiles"
+                    prefetch={true}
+                    onClick={() => setIsUserMenuOpen(false)}
                     className="w-full px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary flex items-center space-x-2"
                   >
                     <UserCircle className="w-3.5 h-3.5 text-muted-foreground" />
                     <span>Bot Profiles &amp; Banners</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsUserMenuOpen(false);
-                      router.push('/settings');
-                    }}
+                  </Link>
+                  <Link
+                    href="/settings"
+                    prefetch={true}
+                    onClick={() => setIsUserMenuOpen(false)}
                     className="w-full px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary flex items-center space-x-2"
                   >
                     <Settings className="w-3.5 h-3.5 text-muted-foreground" />
                     <span>Workspace Settings</span>
-                  </button>
+                  </Link>
                   <button
                     onClick={() => {
                       setIsUserMenuOpen(false);
@@ -281,9 +282,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   const Icon = item.icon;
                   const isActive = pathname === item.href;
                   return (
-                    <button
+                    <Link
                       key={item.href}
-                      onClick={() => router.push(item.href)}
+                      href={item.href}
+                      prefetch={true}
                       title={!isSidebarOpen ? item.label : undefined}
                       className={`w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition ${
                         isActive
@@ -302,7 +304,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                           )}
                         </span>
                       )}
-                    </button>
+                    </Link>
                   );
                 })}
               </div>
@@ -349,12 +351,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       const Icon = item.icon;
                       const isActive = pathname === item.href;
                       return (
-                        <button
+                        <Link
                           key={item.href}
-                          onClick={() => {
-                            setIsMobileMenuOpen(false);
-                            router.push(item.href);
-                          }}
+                          href={item.href}
+                          prefetch={true}
+                          onClick={() => setIsMobileMenuOpen(false)}
                           className={`w-full flex items-center space-x-2.5 px-2.5 py-2 rounded-md text-xs font-medium transition ${
                             isActive
                               ? 'bg-[#5865F2]/15 text-[#5865F2] font-semibold'
@@ -363,7 +364,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         >
                           <Icon className="w-4 h-4" />
                           <span>{item.label}</span>
-                        </button>
+                        </Link>
                       );
                     })}
                   </div>

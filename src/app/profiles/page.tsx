@@ -27,6 +27,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
+import { getCachedData, setCachedData } from '@/lib/client-cache';
 import { PROFILE_THEMES, PROFILE_PRESETS, ProfilePreset } from '@/server/services/bot-profile-presets';
 
 interface BotProfileItem {
@@ -102,12 +103,22 @@ export default function BotProfilesPage() {
   // Fetch all bots for workspace
   const fetchProfiles = async () => {
     if (!currentWorkspace?.id) return;
-    setIsLoading(true);
+    const cacheKey = `workspace:${currentWorkspace.id}:bot_profiles`;
+    const cached = getCachedData<any[]>(cacheKey);
+    if (cached && cached.length > 0) {
+      setBots(cached);
+      setIsLoading(false);
+      if (!selectedBotId) {
+        setSelectedBotId(cached[0].id);
+        populateEditor(cached[0]);
+      }
+    }
     try {
       const res = await fetch(`/api/workspaces/${currentWorkspace.id}/bots/profile`);
       const data = await res.json();
       if (res.ok && data.data?.bots) {
         setBots(data.data.bots);
+        setCachedData(cacheKey, data.data.bots, 15000);
         if (data.data.bots.length > 0 && !selectedBotId) {
           const first = data.data.bots[0];
           setSelectedBotId(first.id);

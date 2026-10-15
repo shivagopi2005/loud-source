@@ -96,20 +96,28 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const triggerEmergencyStop = async () => {
-    if (!currentWorkspace) return;
+    setActiveVoiceSession(null);
     try {
-      if (activeVoiceSession) {
-        await fetch(`/api/voice-sessions/${activeVoiceSession.sessionId}/emergency-stop`, {
-          method: 'POST',
-        });
-      } else {
-        await fetch('/api/fleet/stop', {
+      const stopTasks: Promise<any>[] = [
+        fetch('/api/fleet/stop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ workspaceId: currentWorkspace.id }),
-        });
+          body: JSON.stringify({ workspaceId: currentWorkspace?.id }),
+        }),
+        fetch('/api/fleet/force-disconnect-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+      ];
+      if (activeVoiceSession) {
+        stopTasks.push(
+          fetch(`/api/voice-sessions/${activeVoiceSession.sessionId}/emergency-stop`, {
+            method: 'POST',
+          })
+        );
       }
-      setActiveVoiceSession(null);
+      await Promise.allSettled(stopTasks);
     } catch (err) {
       console.error('Emergency stop error:', err);
     }

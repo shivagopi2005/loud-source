@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   Bot,
   Mic,
@@ -18,6 +19,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
+import { getCachedData, setCachedData } from '@/lib/client-cache';
 
 export default function DashboardOverviewPage() {
   const router = useRouter();
@@ -45,9 +47,24 @@ export default function DashboardOverviewPage() {
 
   const loadDashboardData = async () => {
     if (!currentWorkspace) return;
-    try {
-      setIsLoading(true);
 
+    // Instant cache hydration: zero waiting for page switch
+    const cacheKeyMetrics = 'dashboard:metrics';
+    const cacheKeyBots = `workspace:${currentWorkspace.id}:bots`;
+    const cacheKeyAudits = `workspace:${currentWorkspace.id}:audits`;
+
+    const cachedMetrics = getCachedData<any>(cacheKeyMetrics);
+    const cachedBots = getCachedData<any>(cacheKeyBots);
+    const cachedAudits = getCachedData<any>(cacheKeyAudits);
+
+    if (cachedMetrics) setMetrics(cachedMetrics);
+    if (cachedBots) setBots(cachedBots);
+    if (cachedAudits) setRecentAudits(cachedAudits);
+    if (cachedMetrics || cachedBots) {
+      setIsLoading(false);
+    }
+
+    try {
       const [metricsRes, botsRes, auditsRes] = await Promise.all([
         fetch('/api/metrics'),
         fetch(`/api/workspaces/${currentWorkspace.id}/bots`),
@@ -57,25 +74,34 @@ export default function DashboardOverviewPage() {
       if (metricsRes.ok) {
         const m = await metricsRes.json();
         if (m.data) {
-          setMetrics({
+          const newMetrics = {
             totalBots: m.data.fleet.totalBots,
             onlineBots: m.data.fleet.onlineBots,
             degradedBots: m.data.fleet.degradedBots,
             activeSessions: m.data.fleet.activeVoiceSessions,
             messageQueueDepth: m.data.queues.messageQueueDepth,
             healthQueueDepth: m.data.queues.healthCheckQueueDepth,
-          });
+          };
+          setMetrics(newMetrics);
+          setCachedData(cacheKeyMetrics, newMetrics, 15000);
         }
       }
 
       if (botsRes.ok) {
         const b = await botsRes.json();
-        if (b.data) setBots(b.data);
+        if (b.data) {
+          setBots(b.data);
+          setCachedData(cacheKeyBots, b.data, 15000);
+        }
       }
 
       if (auditsRes.ok) {
         const a = await auditsRes.json();
-        if (a.data) setRecentAudits(a.data.slice(0, 6));
+        if (a.data) {
+          const sliceAudits = a.data.slice(0, 6);
+          setRecentAudits(sliceAudits);
+          setCachedData(cacheKeyAudits, sliceAudits, 15000);
+        }
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -107,27 +133,30 @@ export default function DashboardOverviewPage() {
         </div>
 
         <div className="flex items-center space-x-2">
-          <button
-            onClick={() => router.push('/profiles')}
+          <Link
+            href="/profiles"
+            prefetch={true}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs border border-border transition"
           >
             <UserCircle className="w-3.5 h-3.5 text-muted-foreground" />
             <span>Bot Profiles</span>
-          </button>
-          <button
-            onClick={() => router.push('/voice')}
+          </Link>
+          <Link
+            href="/voice"
+            prefetch={true}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-sm transition"
           >
             <Mic className="w-3.5 h-3.5" />
             <span>Voice Studio</span>
-          </button>
-          <button
-            onClick={() => router.push('/bots?action=new')}
+          </Link>
+          <Link
+            href="/bots?action=new"
+            prefetch={true}
             className="flex items-center space-x-1 px-2.5 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs border border-border transition"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Bot</span>
-          </button>
+          </Link>
         </div>
       </div>
 

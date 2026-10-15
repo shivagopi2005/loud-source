@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
 import { verifyMediaSessionToken } from '../security/jwt';
 import { VoiceWorkerInstance, VoiceEndpointConfig } from './voice-worker';
+import { FleetGatewayService } from '../services/fleet-gateway.service';
 import { prisma } from '../db/prisma';
 import { AuditService } from '../services/audit.service';
 import { decryptSecret } from '../security/encryption';
@@ -460,7 +461,12 @@ export class MediaGatewayManager {
         console.log(`[MediaGateway] Joining all ${workers.length} bots to Discord voice AT A TIME...`);
         await Promise.allSettled(
           workers.map(async (worker, i) => {
-            if (session.state === 'stopped' || session.state === 'stopping') return;
+            if (!this.activeSessions.has(session.sessionId) || (session.state as string) === 'stopped') return;
+            // 30ms micro-stagger between bot connection initializations prevents gateway opcode 4 burst packet drops
+            if (i > 0) {
+              await new Promise((r) => setTimeout(r, i * 30));
+            }
+            if (!this.activeSessions.has(session.sessionId) || (session.state as string) === 'stopped') return;
             try {
               console.log(`[MediaGateway] [${i + 1}/${workers.length}] Joining voice: ${worker.botId}...`);
               await worker.connect(session.sharedPlayer);
@@ -674,8 +680,8 @@ export class MediaGatewayManager {
       timestamp: Date.now(),
     });
 
-    // Forcefully destroy all Discord voice connections immediately
-    session.endpoints.forEach((worker) => {
+    // Forcefully destroy all Discord voice connections in parallel immediately
+    const destroyPromises = Array.from(session.endpoints.values()).map(async (worker) => {
       try {
         worker.destroy();
       } catch {}
@@ -691,6 +697,12 @@ export class MediaGatewayManager {
     session.wsClients.clear();
 
     this.activeSessions.delete(sessionId);
+
+    // Concurrently force-disconnect all workers and any lingering bot voice state across fleet
+    await Promise.allSettled([
+      ...destroyPromises,
+      FleetGatewayService.forceDisconnectAllVoice(),
+    ]);
 
     // Update DB & Audit
     try {
@@ -722,9 +734,11 @@ export class MediaGatewayManager {
   }
 
   public async emergencyStopAll(reason = 'emergency_stop'): Promise<void> {
-    for (const sessionId of Array.from(this.activeSessions.keys())) {
-      await this.emergencyStop(sessionId, reason);
-    }
+    const sessionIds = Array.from(this.activeSessions.keys());
+    await Promise.allSettled([
+      ...sessionIds.map((sessionId) => this.emergencyStop(sessionId, reason)),
+      FleetGatewayService.forceDisconnectAllVoice(),
+    ]);
   }
 
   public setMasterGainAll(gain: number): void {

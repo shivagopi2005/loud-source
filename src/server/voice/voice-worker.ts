@@ -39,9 +39,6 @@ export interface VoiceEndpointMetrics {
  * without being blocked by discord.js's Status.Ready check when shards are in Status.WaitingForGuilds (6).
  */
 export function createCustomVoiceAdapter(guild: any) {
-  if (guild?.voiceAdapterCreator) {
-    return guild.voiceAdapterCreator;
-  }
   return (methods: any) => {
     guild.client.voice.adapters.set(guild.id, methods);
     return {
@@ -49,6 +46,10 @@ export function createCustomVoiceAdapter(guild: any) {
         try {
           if (guild.shard) {
             guild.shard.send(data);
+            return true;
+          }
+          if (guild.client?.ws?.shards?.first()) {
+            guild.client.ws.shards.first().send(data);
             return true;
           }
           return false;
@@ -173,8 +174,30 @@ export class VoiceWorkerInstance {
 
       const botGroupId = this.client.user?.id || this.botId;
 
-      // Clean up any stale voice connection for this bot/guild before connecting
+      // Check if bot is ALREADY in the target channel and ready
       const existingConn = getVoiceConnection(this.guildId, botGroupId);
+      const currentVoiceChannelId = guild.members.me?.voice?.channelId;
+
+      if (
+        existingConn &&
+        existingConn.state.status === VoiceConnectionStatus.Ready &&
+        currentVoiceChannelId === this.channelId
+      ) {
+        console.log(
+          `[VoiceWorker:${this.endpointId}] Bot ${this.botId} is already ready in voice channel ${this.channelId}, reusing connection`
+        );
+        this.connection = existingConn;
+        this.state = this.muted ? 'muted' : 'connected';
+        if (sharedPlayer) {
+          this.sharedPlayer = sharedPlayer;
+          try {
+            this.subscription = this.connection.subscribe(sharedPlayer);
+          } catch {}
+        }
+        return true;
+      }
+
+      // If existing connection was in another channel or broken, clean it up cleanly
       if (existingConn) {
         try {
           existingConn.destroy();
@@ -463,6 +486,35 @@ export class VoiceWorkerInstance {
       this.player = null;
     }
 
+    // Force disconnect from Discord voice channel via Gateway Opcode 4 and voice state
+    try {
+      const client = this.client || FleetGatewayService.getClient(this.botId);
+      const guild = client?.guilds.cache.get(this.guildId);
+      if (guild) {
+        try {
+          guild.members.me?.voice.disconnect().catch(() => {});
+        } catch {}
+        try {
+          if (guild.shard) {
+            guild.shard.send({
+              op: 4,
+              d: {
+                guild_id: this.guildId,
+                channel_id: null,
+                self_mute: false,
+                self_deaf: false,
+              },
+            });
+          }
+        } catch {}
+        try {
+          guild.client.voice.adapters.delete(this.guildId);
+        } catch {}
+      }
+    } catch (e: any) {
+      console.warn(`[VoiceWorker:${this.endpointId}] Disconnect voice error:`, e?.message || e);
+    }
+
     if (this.connection) {
       try {
         this.connection.removeAllListeners('error');
@@ -470,6 +522,14 @@ export class VoiceWorkerInstance {
         this.connection.destroy();
       } catch {}
       this.connection = null;
+    }
+
+    const botGroupId = this.client?.user?.id || this.botId;
+    const globalConn = getVoiceConnection(this.guildId, botGroupId);
+    if (globalConn) {
+      try {
+        globalConn.destroy();
+      } catch {}
     }
 
     if (this.client && this.ownsClient) {
