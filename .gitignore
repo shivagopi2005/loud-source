@@ -15,3 +15,5 @@ coverage/
 *.tsbuildinfo
 logs/
 scratch/
+*.db
+*.db-journal
