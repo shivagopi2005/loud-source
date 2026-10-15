@@ -72,6 +72,8 @@ async function bootstrap() {
 
     const cleanup = async () => {
       console.log('Shutting down gracefully...');
+      const { SupabaseKeepAliveService } = await import('./services/supabase-keepalive.service');
+      SupabaseKeepAliveService.stop();
       await messageWorker.close();
       await healthWorker.close();
       server.close();
@@ -84,7 +86,16 @@ async function bootstrap() {
     console.warn('[Workers] Worker startup warning:', err.message);
   }
 
-  // 5. Connect all ready bots to Discord Gateway (brings bots ONLINE)
+  // 5. Start Supabase Cloud Keep-Alive Service (Prevents database from going offline)
+  try {
+    const { SupabaseKeepAliveService } = await import('./services/supabase-keepalive.service');
+    // Ping every 5 minutes (300,000 ms)
+    SupabaseKeepAliveService.start(5 * 60 * 1000);
+  } catch (err: any) {
+    console.warn('[SupabaseKeepAlive] Startup warning:', err.message);
+  }
+
+  // 6. Connect all ready bots to Discord Gateway (brings bots ONLINE)
   try {
     const { FleetGatewayService } = await import('./services/fleet-gateway.service');
     await FleetGatewayService.autoConnectAll();
