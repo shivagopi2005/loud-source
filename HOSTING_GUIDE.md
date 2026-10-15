@@ -171,3 +171,30 @@ To access your studio over a custom domain with HTTPS and WebSockets:
 | `!spam stop` | `!spam stop` | Halts all active channel spam |
 | `!stop` | `!stop` | Emergency Stop: kills all voice streams and disconnects all bots |
 | `!status` | `!status` | Real-time fleet health, online count, voice state, and latency |
+
+---
+
+## 🛡️ 7. Preventing Supabase from Going Offline / Sleeping
+
+Supabase Free Tier databases automatically pause if they receive no queries or API calls for **7 consecutive days**. To guarantee that your database and 27 bot registrations **NEVER** pause or go offline, we have engineered a multi-layered keep-alive system:
+
+### 1. In-App Automated Heartbeat (Built-In & Automatic)
+- Whenever your server is running (via PM2, systemd, or `npm run start`), the built-in `SupabaseKeepAliveService` runs every **5 minutes**.
+- It runs two simultaneous checks:
+  1. A direct SQL query: `SELECT 1 as keepalive;` via Prisma to keep database connections warm.
+  2. A secure HTTP API ping with your publishable key to `https://wnbxfndxmofoylnsbyao.supabase.co/auth/v1/health`.
+- Status is inspectable live at: `http://localhost:3000/api/supabase/keepalive`
+
+### 2. Standalone Keep-Alive Script
+Run manually or add to system crontab:
+```bash
+node scripts/supabase-keepalive.js
+```
+
+### 3. Optional: Free External Cloud Ping (100% Off-Server Redundancy)
+Even if your local host server or VPS is turned off for weeks, you can keep Supabase awake for free using any free uptime monitor:
+1. Go to [cron-job.org](https://cron-job.org) or [uptimerobot.com](https://uptimerobot.com) (100% free).
+2. Create an HTTP monitor that runs once every 24 hours (or every 6 hours):
+   - **URL**: `https://wnbxfndxmofoylnsbyao.supabase.co/auth/v1/health`
+   - **Header**: `apikey: sb_publishable_iWTvZCUWxTAPllyofl7a6Q_6jqAME90`
+3. With this monitor active, Supabase registers daily activity from the cloud and will **NEVER pause or go to sleep**.
