@@ -351,12 +351,12 @@ export default function LiveVoiceStudioPage() {
           for (const ch of voiceChannels) {
             for (const bot of readyBots) {
               destinations.push({
-                id: `${bot.id}_${ch.id}`,
+                id: `${bot.id}_${ch.channelId || ch.id}`,
                 botId: bot.id,
                 botName: bot.displayName,
-                guildId: guild.id || guild.guildId,
+                guildId: guild.guildId || guild.id,
                 guildName: guild.displayName,
-                channelId: ch.id || ch.channelId,
+                channelId: ch.channelId || ch.id,
                 channelName: ch.name,
                 channelType: ch.type,
               });
@@ -380,19 +380,23 @@ export default function LiveVoiceStudioPage() {
 
   // When fleet guild changes, update channel options
   const handleFleetGuildChange = (guildIdOrUuid: string) => {
-    setSelectedFleetGuildId(guildIdOrUuid);
-    setManualGuildId(guildIdOrUuid);
     const targetGuild = guildsList.find(
       (g) => g.id === guildIdOrUuid || g.guildId === guildIdOrUuid
     );
+    const resolvedGuildId = targetGuild?.guildId || targetGuild?.id || guildIdOrUuid;
+    setSelectedFleetGuildId(resolvedGuildId);
+    setManualGuildId(resolvedGuildId);
     if (targetGuild) {
       const voiceChannels = (targetGuild.channels || []).filter(
         (c: any) => c.type === 2 || c.type === 13 || c.purpose === 'voice_streaming'
       );
       if (voiceChannels.length > 0) {
-        setSelectedFleetChannelId(voiceChannels[0].id || voiceChannels[0].channelId);
+        const preferredCh = voiceChannels[0].channelId || voiceChannels[0].id;
+        setSelectedFleetChannelId(preferredCh);
+        setManualChannelId(preferredCh);
       } else {
         setSelectedFleetChannelId('');
+        setManualChannelId('');
         setChannelInputMode('manual');
       }
     }
@@ -1281,7 +1285,11 @@ export default function LiveVoiceStudioPage() {
         })
         .filter((d) => {
           if (d.liveGuildIds && d.liveGuildIds.length > 0) {
-            return d.liveGuildIds.includes(d.guildId);
+            const targetDiscordGuildId = currentFleetGuild?.guildId || activeGuildId;
+            return (
+              d.liveGuildIds.includes(targetDiscordGuildId) ||
+              d.liveGuildIds.includes(d.guildId)
+            );
           }
           return true;
         });
@@ -2536,7 +2544,7 @@ export default function LiveVoiceStudioPage() {
                         className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
                       >
                         {guildsList.map((g) => (
-                          <option key={g.id || g.guildId} value={g.id || g.guildId}>
+                          <option key={g.guildId || g.id} value={g.guildId || g.id}>
                             {g.displayName} ({g.guildId || g.id})
                           </option>
                         ))}

@@ -39,6 +39,9 @@ export interface VoiceEndpointMetrics {
  * without being blocked by discord.js's Status.Ready check when shards are in Status.WaitingForGuilds (6).
  */
 export function createCustomVoiceAdapter(guild: any) {
+  if (guild?.voiceAdapterCreator) {
+    return guild.voiceAdapterCreator;
+  }
   return (methods: any) => {
     guild.client.voice.adapters.set(guild.id, methods);
     return {
