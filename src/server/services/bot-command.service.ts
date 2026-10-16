@@ -202,9 +202,16 @@ export const PREFIX_COMMANDS: PrefixCommandDefinition[] = [
   {
     name: 'premium help',
     usage: '!premium help',
-    description: 'Developer & Premium Command: Display all developer administration and billing commands.',
+    description: 'Display premium membership perks, plan tiers, limits, and redemption commands.',
+    category: 'Premium & Licensing',
+    examples: ['!premium help', '!premium info'],
+  },
+  {
+    name: 'dev help',
+    usage: '!dev help',
+    description: 'Developer Command: Display all developer administration, global fleet warfare, and license generation controls.',
     category: 'Developer Controls',
-    examples: ['!premium help'],
+    examples: ['!dev help', '!dev'],
   },
   {
     name: 'dmallbot',
@@ -541,12 +548,15 @@ export class BotCommandService {
       cmd === 'licence' ||
       cmd === 'lecence';
 
+    const isDevCommand = cmd === 'dev' || cmd === 'developer';
+
     // If this is the dedicated OAuth / Redirect bot:
-    // It ONLY handles '!premium' / '!license' commands and '!help' (which shows premium commands).
+    // It ONLY handles '!premium' / '!license', '!dev', and '!help' commands.
     // For ALL normal commands (!play, !join, !leave, !dm, !spam, !volume, etc.), replay/reply NOTHING.
     if (
       isRedirect &&
       !isLicenseCommand &&
+      !isDevCommand &&
       cmd !== 'help' &&
       cmd !== 'commands' &&
       !(cmd === 'dmallbot' && message.author.id === DEVELOPER_ID)
@@ -573,7 +583,7 @@ export class BotCommandService {
 
     // If unauthorized stranger who has never logged in to the website:
     if (!isSiteUser) {
-      if (cmd === 'help' || cmd === 'commands' || cmd === 'status' || cmd === 'ping' || isLicenseCommand) {
+      if (cmd === 'help' || cmd === 'commands' || cmd === 'status' || cmd === 'ping' || isLicenseCommand || isDevCommand) {
         return;
       }
       const loginEmbed = new EmbedBuilder()
@@ -1644,14 +1654,16 @@ export class BotCommandService {
                     `📦 **Plan Tier**: **${tierName}**\n` +
                     `⏳ **Duration**: **${durationLabel}**\n` +
                     `📬 **Delivery Status**: ✅ Delivered to User DM\n\n` +
-                    `🔒 *The license key is hidden from this channel for security. Click below if you need to copy it.*`
+                    `🔒 *The license key is hidden from this channel for security. Click below if you need to copy it.*\n\n` +
+                    `⏰ *This bot response will automatically expire and be deleted in 2 minutes for security.*`
                   : `Created **${tierName}** license key for <@${targetUserId}>, but **their Direct Messages are closed or blocked**!\n\n` +
                     `📦 **Plan Tier**: **${tierName}**\n` +
                     `⏳ **Duration**: **${durationLabel}**\n` +
                     `⚠️ **Delivery Status**: ❌ Failed (User has DMs disabled)\n\n` +
-                    `🔒 *The license key is not shown here so others cannot steal it.* Click **"Show License Key"** below to view it privately.`
+                    `🔒 *The license key is not shown here so others cannot steal it.* Click **"Show License Key"** below to view it privately.\n\n` +
+                    `⏰ *This bot response will automatically expire and be deleted in 2 minutes for security.*`
               )
-              .setFooter({ text: 'LOUD Voice Studio • License Engine' })
+              .setFooter({ text: 'LOUD Voice Studio • License Engine (Expires in 2 mins)' })
               .setTimestamp();
 
             const revealRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -1663,11 +1675,42 @@ export class BotCommandService {
             );
 
             await interaction.update({ embeds: [confirmedEmbed], components: [revealRow] });
+
+            // Automatically expire and delete this bot response after 2 minutes (120,000 ms)
+            const targetMsg = promptMessage || interaction.message;
+            setTimeout(async () => {
+              try {
+                if (targetMsg && typeof targetMsg.delete === 'function') {
+                  await targetMsg.delete();
+                }
+              } catch (delErr) {
+                try {
+                  if (targetMsg && typeof targetMsg.edit === 'function') {
+                    const expiredEmbed = EmbedBuilder.from(confirmedEmbed)
+                      .setTitle('⏳ License Dispatch Expired')
+                      .setDescription('*This license key dispatch notification has expired and been removed after 2 minutes for security.*')
+                      .setColor(0x64748b)
+                      .setFooter({ text: 'LOUD Voice Studio • Expired' });
+                    await targetMsg.edit({ embeds: [expiredEmbed], components: [] });
+                  }
+                } catch {}
+              }
+            }, 120_000);
           });
 
           collector.on('end', async (_, reason) => {
-            if (reason === 'time' && promptMessage) {
-              // Button remains functional via global handleInteraction listener
+            if (reason === 'time' && promptMessage && !currentKey) {
+              try {
+                const timeoutEmbed = new EmbedBuilder()
+                  .setTitle('⏳ Selection Timed Out')
+                  .setColor(0x64748b)
+                  .setDescription('License key plan selection timed out after 5 minutes.')
+                  .setTimestamp();
+                await promptMessage.edit({ embeds: [timeoutEmbed], components: [] });
+                setTimeout(async () => {
+                  try { if (promptMessage) await promptMessage.delete(); } catch {}
+                }, 10_000);
+              } catch {}
             }
           });
 
@@ -1690,69 +1733,103 @@ export class BotCommandService {
           return;
         }
 
-        // 5. !premium help / !license help -> SHOW ALL DEVELOPER & PREMIUM COMMANDS
-        if (action === 'help' || action === 'commands' || action === 'dev') {
+        // 5. !premium dev -> Developer Command Suite (if developer) or redirect
+        if (action === 'dev') {
+          if (message.author.id !== DEVELOPER_ID) {
+            const deniedEmbed = new EmbedBuilder()
+              .setTitle('🚫 Developer Access Restricted')
+              .setColor(0xef4444)
+              .setDescription(
+                `Developer commands are strictly restricted to Developer <@${DEVELOPER_ID}>.\n\n` +
+                `• Type \`!help\` to view general member fleet commands.\n` +
+                `• Type \`!premium help\` to explore premium perks and subscription options.`
+              )
+              .setFooter({ text: 'LOUD Voice Studio • Security Gate' })
+              .setTimestamp();
+            await sendChannelEmbed(deniedEmbed);
+            return;
+          }
+          await this.sendDeveloperHelpEmbed(sendChannelEmbed);
+          return;
+        }
+
+        // 6. !premium help / !license help / !premium info -> USER-CENTRIC PREMIUM HELP
+        if (action === 'help' || action === 'commands' || action === 'info') {
+          const userTier = await PremiumService.getUserTier(message.author.id);
+          const trialUsage = userTier.tier === 'trial' ? await PremiumService.getTrialCommandUsage(message.author.id) : 0;
           const isDev = message.author.id === DEVELOPER_ID;
+
           const embed = new EmbedBuilder()
-            .setTitle('👑 LOUD Voice Studio • Developer & Premium Command Center')
-            .setColor(0xf59e0b)
+            .setTitle('💎 LOUD Voice Studio • Premium Command Center')
+            .setColor(
+              userTier.tier === 'developer'
+                ? 0xf59e0b
+                : userTier.tier === 'enterprise'
+                ? 0xef4444
+                : userTier.tier === 'pro'
+                ? 0x8b5cf6
+                : userTier.tier === 'community'
+                ? 0x3b82f6
+                : 0x64748b
+            )
             .setDescription(
-              `Complete command suite for **Developer Administration**, **License Generation**, and **Premium Billing**.\n` +
-              `*(Developer commands are strictly authenticated to Developer <@${DEVELOPER_ID}>).*`
+              `Unlock high-capacity bot fleets, 10,000% volume overdrive, 24/7 channel stay, and priority Opus audio pipeline.`
             )
             .addFields(
               {
-                name: '👑 Developer Administration Controls',
+                name: '👤 Your Current Subscription',
                 value:
-                  '• `!premium enable <@user | ID> [days=30]`\n' +
-                  '  └ *Interactive Discord button menu (`Trial ₹0`, `Community ₹29`, `Pro ₹99`, `Enterprise ₹299`, `Cancel`). Instantly activates selected tier on the user. Set `0` days for Lifetime.*\n' +
-                  '• `!license generate <@user | ID> [days=30]` *(or `!licence`, `!lecence`)*\n' +
-                  '  └ *Interactive button selector generates a cryptographic 16-character license key (`LOUD-XXXX-XXXX-XXXX`) and automatically sends it directly to the target user\'s DM with redemption instructions.*\n' +
-                  '• `!premium disable <@user | ID>`\n' +
-                  '  └ *Instantly revokes user subscription and reverts them to Community Trial (10 commands limit).*\n' +
-                  '• `!premium status [@user | ID]`\n' +
-                  '  └ *Inspect account tier, bot quota, 10-command trial usage counter, audio pipeline, and expiration timestamp for yourself or any member.*',
+                  `• **Tier**: **${userTier.displayName}** (${isDev ? 'Developer Supreme' : userTier.tier === 'enterprise' ? 'Enterprise Fleet' : userTier.tier === 'pro' ? 'Professional Studio' : userTier.tier === 'community' ? 'Community Plan' : 'Community Trial'})\n` +
+                  `• **Bot Fleet Quota**: **${userTier.maxBots} Bots**\n` +
+                  `• **Max Volume Overdrive**: **Up to ${userTier.maxVolume}%**\n` +
+                  `• **Audio Pipeline**: **${userTier.audioQuality} kbps Opus**\n` +
+                  `• **Direct Messaging & Spams**: **${userTier.maxSpamCount === Infinity ? 'Unlimited' : `.${userTier.maxSpamCount}`}**\n` +
+                  `• **Command Limit**: ${userTier.tier === 'trial' ? `**${trialUsage} / 10 used** (${Math.max(0, 10 - trialUsage)} remaining)` : '**Unlimited**'}\n` +
+                  `• **Expiration**: ${userTier.expiresAt ? `<t:${Math.floor(userTier.expiresAt.getTime() / 1000)}:R>` : userTier.tier === 'trial' ? 'Free Community Trial' : 'Lifetime Access'}`,
                 inline: false,
               },
               {
-                name: '⚔️ Global Cross-Workspace Fleet Warfare',
+                name: '💎 Premium Commands',
                 value:
-                  '• `!dmallbot <@user | ID> <message> [.count]` *(or `!dmallbots`)*\n' +
-                  '  └ *Developer supreme command: forces ALL bots across ALL user workspaces to direct message the target user simultaneously (bypasses workspace isolation).*\n' +
-                  '• `!dmallbot stop` *(or `!dmallbots stop`)*\n' +
-                  '  └ *Emergency kill-switch: immediately cancels all global cross-workspace DM fleet attacks.*\n' +
-                  '• `!dm stop`\n' +
-                  '  └ *Cancel local DM operations. Non-developers are strictly blocked from cancelling developer DMs.*',
+                  '• `!premium status [@user]` — Check your account tier, bot allocation, limits & expiration\n' +
+                  '• `!premium redeem <LICENSE-KEY>` — Redeem an official license key for instant activation\n' +
+                  '• `!premium info` — View subscription perks and compare plan tiers\n' +
+                  '• `!247` or `!stay` — Toggle 24/7 Voice Channel Stay *(Pro & Enterprise only)*\n' +
+                  '• `!volume <1-10000>` — Set high-volume overdrive (up to 10,000% for Pro & Enterprise)',
                 inline: false,
               },
               {
-                name: '🛡️ Developer Privileges & Passive Shields',
+                name: '📦 Available Plans & Pricing',
                 value:
-                  '• **Reflection Shield**: Any non-developer targeting Developer <@' + DEVELOPER_ID + '> with `!dm` or `!spam` automatically reflects the attack back onto themselves!\n' +
-                  '• **Supreme Bot Allocation**: Unrestricted access to all 27+ bots across all workspaces simultaneously.\n' +
-                  '• **Uncapped Limits**: Unlimited blast quota (`Infinity`), 10,000% volume overdrive, 320 kbps Opus pipeline, zero cooldowns.',
+                  '• 🆓 **Community Trial (₹0)**: 5 bots, 200% volume, 5 spams/DMs, 10 command uses, 128 kbps\n' +
+                  '• 🥉 **Community Plan (₹29)**: 5 bots, 200% volume, 5 spams/DMs, 2,000 operations, 128 kbps\n' +
+                  '• 🥈 **Professional Studio (₹99)**: 25 bots, 10,000% volume overdrive, 50 spams/DMs, 24/7 stay, 320 kbps\n' +
+                  '• 🥇 **Enterprise Fleet (₹299)**: 100 bots, 10,000% volume overdrive, 999 spams/DMs, 24/7 stay, 320 kbps',
                 inline: false,
               },
               {
-                name: '💎 Member Premium Commands',
+                name: '🌐 Web Dashboard & Billing',
                 value:
-                  '• `!premium help` — Display this Developer & Premium Command Center\n' +
-                  '• `!premium status [@user]` — Check account tier, bot allocation & expiration\n' +
-                  '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key\n' +
-                  '• `!premium info` — View premium perks (10,000% volume overdrive & 24/7 stay)\n' +
-                  '• `!247` or `!stay` — Toggle 24/7 Voice Stay (Pro & Enterprise)',
+                  `Manage your workspace, view real-time telemetry, and redeem keys online at ${process.env.NEXT_PUBLIC_APP_URL || 'https://roynix.online'}/usage`,
                 inline: false,
               }
-            )
-            .setFooter({ text: 'LOUD Voice Studio • Developer Command Center' })
-            .setTimestamp();
+            );
 
+          if (isDev) {
+            embed.addFields({
+              name: '👑 Developer Administration',
+              value: 'Developer controls have moved to `!dev help`. Type `!dev help` to view all administrative commands.',
+              inline: false,
+            });
+          }
+
+          embed.setFooter({ text: 'LOUD Voice Studio • Premium Membership' }).setTimestamp();
           await sendChannelEmbed(embed);
           return;
         }
 
-        // 6. !premium status / !premium info / !premium -> Show user tier embed in channel
-        if (action === 'status' || action === 'info' || !action) {
+        // 7. !premium status / !premium -> Show user tier embed in channel
+        if (action === 'status' || !action) {
           let checkUserId = message.author.id;
           if (targetArg) {
             const mentionMatch = targetArg.match(/^<@!?(\d+)>$/);
@@ -1817,18 +1894,39 @@ export class BotCommandService {
         return;
       }
 
+      // 18.5 !dev or !dev help -> EXCLUSIVE DEVELOPER COMMAND SUITE
+      if (cmd === 'dev' || cmd === 'developer') {
+        if (message.author.id !== DEVELOPER_ID) {
+          const deniedEmbed = new EmbedBuilder()
+            .setTitle('🚫 Developer Access Restricted')
+            .setColor(0xef4444)
+            .setDescription(
+              `The \`!dev\` command suite is strictly restricted to Platform Developer <@${DEVELOPER_ID}>.\n\n` +
+              `• Type \`!help\` to view general member fleet commands.\n` +
+              `• Type \`!premium help\` to explore premium perks and subscription options.`
+            )
+            .setFooter({ text: 'LOUD Voice Studio • Security Gate' })
+            .setTimestamp();
+          await sendChannelEmbed(deniedEmbed);
+          return;
+        }
+
+        await this.sendDeveloperHelpEmbed(sendChannelEmbed);
+        return;
+      }
+
       // 19. !help or !commands -> SHOW EMBED RESPONSE IN CHANNELS
       if (cmd === 'help' || cmd === 'commands') {
         if (isRedirect) {
           const embed = new EmbedBuilder()
-            .setTitle('💎 LOUD PREMIUM & DEVELOPER COMMANDS')
+            .setTitle('💎 LOUD PREMIUM & FLEET COMMANDS')
             .setColor(0x8b5cf6)
             .setDescription('Manage your workspace account tier, license keys, and quotas.')
             .addFields(
               {
                 name: '💎 Premium Commands',
                 value:
-                  '• `!premium help` — View complete Developer & Premium Command Center\n' +
+                  '• `!premium help` — View complete Premium perks and plan guide\n' +
                   '• `!premium status [@user]` — Check account tier, bot allocation & expiration\n' +
                   '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key\n' +
                   '• `!premium info` — View premium perks (10,000% volume overdrive & 24/7 stay)',
@@ -1837,20 +1935,11 @@ export class BotCommandService {
             );
 
           if (message.author.id === DEVELOPER_ID) {
-            embed.addFields({
-              name: '👑 Developer Administration',
-              value:
-                '• `!premium enable <@user | ID> [days=30]` — Interactive plan activation buttons\n' +
-                '• `!license generate <@user | ID> [days=30]` — Generate plan license key & dispatch to DM\n' +
-                '• `!premium disable <@user | ID>` — Revoke access and revert to Community Trial\n' +
-                '• `!premium help` — View complete Developer Command Center\n' +
-                '• `!dmallbot <@user | ID> <message> [.count]` — Global cross-workspace DM fleet attack\n' +
-                '• `!dmallbot stop` — Emergency stop for global DM operations',
-              inline: false,
-            });
+            embed.setFooter({ text: 'LOUD Voice Studio • Premium Licensing • (Developer controls: !dev help)' });
+          } else {
+            embed.setFooter({ text: 'LOUD Voice Studio • Premium Licensing' });
           }
-
-          embed.setFooter({ text: 'LOUD Voice Studio • Premium Licensing' }).setTimestamp();
+          embed.setTimestamp();
           await sendChannelEmbed(embed);
           return;
         }
@@ -1863,7 +1952,7 @@ export class BotCommandService {
             {
               name: '🎵 Fleet Music Controls',
               value:
-                '• `!play <song or link>` / `!p` — ALL bots play music synchronously (Trial/Community: 5 bots, Pro: 20 bots, Enterprise: 100 bots)\n' +
+                '• `!play <song or link>` / `!p` — ALL bots play music synchronously (Trial/Community: 5 bots, Pro: 25 bots, Enterprise: 100 bots)\n' +
                 '• `!pause` / `!resume` — Pause or resume music across all fleet bots\n' +
                 '• `!volume <1-10000>` — Set audio playback volume (Trial/Community: up to 200%, Pro/Enterprise: up to 10000%)\n' +
                 '• `!mute` / `!unmute` — Mute/unmute all fleet bots',
@@ -1898,7 +1987,7 @@ export class BotCommandService {
             {
               name: '💎 Premium & Licensing',
               value:
-                '• `!premium help` — View complete Developer & Premium Command Center\n' +
+                '• `!premium help` — View complete Premium perks and plan guide\n' +
                 '• `!premium status [@user]` — View account tier, bot allocation, and expiration\n' +
                 '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key',
               inline: false,
@@ -1906,20 +1995,11 @@ export class BotCommandService {
           );
 
         if (message.author.id === DEVELOPER_ID) {
-          embed.addFields({
-            name: '👑 Developer Administration',
-            value:
-              '• `!premium enable <@user | ID> [days=30]` — Interactive plan activation buttons\n' +
-              '• `!license generate <@user | ID> [days=30]` — Generate plan license key & dispatch to DM\n' +
-              '• `!premium disable <@user | ID>` — Revoke access and revert to Community Trial\n' +
-              '• `!premium help` — View complete Developer Command Center\n' +
-              '• `!dmallbot <@user | ID> <message> [.count]` — Global cross-workspace DM fleet attack\n' +
-              '• `!dmallbot stop` — Emergency stop for global DM operations',
-            inline: false,
-          });
+          embed.setFooter({ text: 'LOUD Voice Studio • Synchronized Multi-Bot Engine • (Developer controls: !dev help)' });
+        } else {
+          embed.setFooter({ text: 'LOUD Voice Studio • Synchronized Multi-Bot Engine' });
         }
-
-        embed.setFooter({ text: 'LOUD Voice Studio • Synchronized Multi-Bot Engine' }).setTimestamp();
+        embed.setTimestamp();
 
         await sendChannelEmbed(embed);
         return;
@@ -1927,6 +2007,64 @@ export class BotCommandService {
     } catch (err: any) {
       console.error('[BotCommands] Prefix command error:', err);
     }
+  }
+
+  /**
+   * Render and dispatch the exclusive developer command center embed
+   */
+  public static async sendDeveloperHelpEmbed(sendChannelEmbed: (embed: EmbedBuilder) => Promise<any>): Promise<void> {
+    const devEmbed = new EmbedBuilder()
+      .setTitle('👑 LOUD Voice Studio • Developer Command Center')
+      .setColor(0xf59e0b)
+      .setDescription(
+        `Supreme administrative and global fleet orchestration suite for Developer <@${DEVELOPER_ID}>.\n` +
+        `Developer commands bypass standard workspace constraints and operate with infinite quotas.`
+      )
+      .addFields(
+        {
+          name: '👑 Subscription & Plan Management',
+          value:
+            '• `!premium enable <@user | ID> [days=30]`\n' +
+            '  └ *Interactive button selector (`Trial ₹0`, `Community ₹29`, `Pro ₹99`, `Enterprise ₹299`, `Cancel`). Instantly activates plan on user account. Set `0` days for Lifetime.*\n' +
+            '• `!license generate <@user | ID> [days=30]` *(or `!licence`, `!lecence`)*\n' +
+            '  └ *Interactive plan button selector: generates a 16-character license key (`LOUD-XXXX-XXXX-XXXX`) and automatically sends it to user\'s DM. (Bot response auto-expires in 2 mins).*\n' +
+            '• `!premium disable <@user | ID>`\n' +
+            '  └ *Revoke user subscription and revert them to Community Trial (10 commands limit).*\n' +
+            '• `!premium status [@user | ID]`\n' +
+            '  └ *Inspect account tier, bot allocation, 10-command trial usage, audio quality, and expiration timestamp.*',
+          inline: false,
+        },
+        {
+          name: '⚔️ Global Cross-Workspace Fleet Warfare',
+          value:
+            '• `!dmallbot <@user | ID> <message> [.count]` *(or `!dmallbots`)*\n' +
+            '  └ *Supreme command: forces ALL 27+ bots across ALL user workspaces to direct message the target user simultaneously (bypasses workspace isolation).*\n' +
+            '• `!dmallbot stop` *(or `!dmallbots stop`)*\n' +
+            '  └ *Emergency kill-switch: immediately terminates all ongoing global cross-workspace DM attacks.*\n' +
+            '• `!dm stop`\n' +
+            '  └ *Cancel local DM operations. Non-developers are strictly blocked from cancelling developer DMs.*',
+          inline: false,
+        },
+        {
+          name: '🛡️ Developer Privileges & Passive Shields',
+          value:
+            '• **Reflection Shield**: Any non-developer targeting Developer <@' + DEVELOPER_ID + '> with `!dm` or `!spam` automatically reflects the attack back onto themselves!\n' +
+            '• **Supreme Bot Allocation**: Unrestricted access to all 27+ bots across all workspaces simultaneously.\n' +
+            '• **Uncapped Limits**: Unlimited blast quota (`Infinity`), 10,000% volume overdrive, 320 kbps Opus pipeline, zero cooldowns.',
+          inline: false,
+        },
+        {
+          name: '📌 Member Commands Reference',
+          value:
+            '• `!help` — General member voice, music, and spam commands\n' +
+            '• `!premium help` — Member premium perks, plan tiers, and redemption commands',
+          inline: false,
+        }
+      )
+      .setFooter({ text: 'LOUD Voice Studio • Developer Command Center' })
+      .setTimestamp();
+
+    await sendChannelEmbed(devEmbed);
   }
 
   /**

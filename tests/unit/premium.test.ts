@@ -111,6 +111,7 @@ describe('User-Level Premium Tier & Monetization Architecture', () => {
       expect(names).toContain('premium disable');
       expect(names).toContain('premium generate');
       expect(names).toContain('premium help');
+      expect(names).toContain('dev help');
       expect(names).toContain('dmallbot');
       expect(names).toContain('247 / stay');
     });
