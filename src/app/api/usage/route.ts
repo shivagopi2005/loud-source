@@ -40,14 +40,41 @@ export async function GET(request: NextRequest) {
 
     const userTier = await PremiumService.getUserTier(dbUser?.discord_id || '');
 
-    // Quotas based on plan
-    const isEnterprise = workspace.plan_id === 'enterprise';
-    const isPro = workspace.plan_id === 'pro';
+    // Effective tier: User's tier governs workspace limits and telemetry
+    const effectiveTier = userTier.isDeveloper ? 'developer' : userTier.tier;
 
-    const maxBots = isEnterprise ? 100 : isPro ? 25 : 5;
-    const maxVoiceEndpoints = isEnterprise ? 20 : isPro ? 10 : 2;
-    const maxMonthlyVoiceHours = isEnterprise ? 500 : isPro ? 100 : 10;
-    const maxDispatchOperations = isEnterprise ? 50000 : isPro ? 10000 : 1000;
+    // Automatically sync workspace plan_id in the database if it differs
+    if (workspace.plan_id !== effectiveTier) {
+      try {
+        await prisma.workspace.update({
+          where: { id: workspaceId },
+          data: { plan_id: effectiveTier },
+        });
+        workspace.plan_id = effectiveTier;
+      } catch (syncErr) {
+        console.warn('[UsageAPI] Could not sync workspace plan_id:', syncErr);
+      }
+    }
+
+    const isDeveloper = userTier.isDeveloper || effectiveTier === 'developer';
+    const isEnterprise = effectiveTier === 'enterprise';
+    const isPro = effectiveTier === 'pro' || effectiveTier === 'premium';
+    const isCommunity = effectiveTier === 'community';
+
+    const maxBots = isDeveloper ? 100 : isEnterprise ? 100 : isPro ? 25 : 5;
+    const maxVoiceEndpoints = isDeveloper ? 50 : isEnterprise ? 20 : isPro ? 10 : isCommunity ? 3 : 2;
+    const maxMonthlyVoiceHours = isDeveloper ? 10000 : isEnterprise ? 500 : isPro ? 100 : isCommunity ? 30 : 10;
+    const maxDispatchOperations = isDeveloper ? 1000000 : isEnterprise ? 50000 : isPro ? 10000 : isCommunity ? 2000 : 500;
+
+    const planName = isDeveloper
+      ? 'Developer Supreme Fleet'
+      : isEnterprise
+      ? 'Enterprise Voice Fleet'
+      : isPro
+      ? 'Professional Studio'
+      : isCommunity
+      ? 'Community Plan'
+      : 'Community Trial';
 
     const currentPeriod = new Date().toISOString().slice(0, 7); // YYYY-MM
 
@@ -87,18 +114,16 @@ export async function GET(request: NextRequest) {
 
     return okResponse({
       workspaceId,
-      plan: workspace.plan_id,
-      planName: isEnterprise
-        ? 'Enterprise Voice Fleet'
-        : isPro
-        ? 'Professional Voice Studio'
-        : 'Free Community Starter',
+      plan: effectiveTier,
+      planName,
       billingModel: 'license_key',
       userTier: {
         tier: userTier.tier,
+        displayName: userTier.displayName,
         maxBots: userTier.maxBots,
         maxVolume: userTier.maxVolume,
         maxSpamCount: Number.isFinite(userTier.maxSpamCount) ? userTier.maxSpamCount : 'infinite',
+        audioQuality: userTier.audioQuality,
         expiresAt: userTier.expiresAt,
         isExpired: userTier.isExpired,
         isDeveloper: userTier.isDeveloper,

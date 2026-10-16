@@ -246,6 +246,16 @@ export class PremiumService {
       },
     });
 
+    // Also sync all workspaces owned by this user
+    try {
+      await prisma.workspace.updateMany({
+        where: { owner_user_id: user.id },
+        data: { plan_id: tier },
+      });
+    } catch (wsErr) {
+      console.warn('[PremiumService] Could not update workspace plans:', wsErr);
+    }
+
     console.log(
       `[PremiumService] Activated ${tier.toUpperCase()} for user ${discordUserId} (${durationDays === 0 ? 'Lifetime' : `${durationDays} days`}) by ${activatedById}`
     );
@@ -276,6 +286,16 @@ export class PremiumService {
         premium_expires_at: null,
       },
     });
+
+    try {
+      const dbUser = await prisma.user.findUnique({ where: { discord_id: discordUserId } });
+      if (dbUser) {
+        await prisma.workspace.updateMany({
+          where: { owner_user_id: dbUser.id },
+          data: { plan_id: 'trial' },
+        });
+      }
+    } catch {}
 
     console.log(`[PremiumService] Reverted user ${discordUserId} to Community Trial`);
     return user;

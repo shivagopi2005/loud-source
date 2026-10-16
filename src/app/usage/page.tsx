@@ -95,22 +95,27 @@ export default function UsageAndBillingPage() {
     }
   };
 
+  const userTier = usageData?.userTier;
+  const isDeveloper = userTier?.isDeveloper || userTier?.tier === 'developer';
+
+  // Effective plan determined by API telemetry, userTier, or workspace context
+  const rawPlan = (usageData?.plan || userTier?.tier || currentWorkspace?.planId || 'trial').toLowerCase();
+  const currentPlan = isDeveloper ? 'developer' : rawPlan;
+
+  const isEnterprise = currentPlan === 'enterprise' || isDeveloper;
+  const isPro = (currentPlan === 'pro' || currentPlan === 'premium') && !isDeveloper;
+  const isCommunity = currentPlan === 'community' && !isDeveloper;
+  const isTrial = (currentPlan === 'trial' || currentPlan === 'free') && !isDeveloper && !isPro && !isEnterprise && !isCommunity;
+
   const botCount = usageData?.currentUsage?.registeredBots || 0;
-  const botMax = usageData?.quotas?.maxBots || 100;
+  const botMax = usageData?.quotas?.maxBots || (isDeveloper || isEnterprise ? 100 : isPro ? 25 : 5);
   const botPercentage = Math.min(100, Math.round((botCount / (botMax || 1)) * 100));
 
   const voiceHours = usageData?.currentUsage?.voiceHoursUsed || 0;
-  const maxVoiceHours = usageData?.quotas?.maxMonthlyVoiceHours || 500;
+  const maxVoiceHours = usageData?.quotas?.maxMonthlyVoiceHours || (isDeveloper || isEnterprise ? 500 : isPro ? 100 : isCommunity ? 30 : 10);
   const voicePercentage = Math.min(100, Math.round((voiceHours / (maxVoiceHours || 1)) * 100));
 
-  const maxEndpoints = usageData?.quotas?.maxVoiceEndpoints || 20;
-
-  const currentPlan = currentWorkspace?.planId || 'enterprise';
-  const isEnterprise = currentPlan.toLowerCase() === 'enterprise';
-
-  const userTier = usageData?.userTier;
-  const isDeveloper = userTier?.isDeveloper || userTier?.tier === 'developer';
-  const isUserPremium = userTier?.tier === 'premium';
+  const maxEndpoints = usageData?.quotas?.maxVoiceEndpoints || (isDeveloper ? 50 : isEnterprise ? 20 : isPro ? 10 : isCommunity ? 3 : 2);
 
   const plans = [
     {
@@ -125,7 +130,7 @@ export default function UsageAndBillingPage() {
         'Standard 128kbps Opus Audio',
         'Website Login Activation',
       ],
-      isCurrent: currentPlan.toLowerCase() === 'free' || currentPlan.toLowerCase() === 'trial',
+      isCurrent: isTrial,
       popular: false,
     },
     {
@@ -140,8 +145,8 @@ export default function UsageAndBillingPage() {
         'Standard 128kbps Opus Audio',
         'Community Discord Support',
       ],
-      isCurrent: currentPlan.toLowerCase() === 'community',
-      popular: false,
+      isCurrent: isCommunity,
+      popular: isCommunity,
     },
     {
       id: 'pro',
@@ -156,8 +161,8 @@ export default function UsageAndBillingPage() {
         '24/7 Voice Channel Stay',
         'Multi-Bot Group Voice Sync',
       ],
-      isCurrent: currentPlan.toLowerCase() === 'pro' || currentPlan.toLowerCase() === 'premium',
-      popular: false,
+      isCurrent: isPro,
+      popular: isPro,
     },
     {
       id: 'enterprise',
@@ -173,7 +178,7 @@ export default function UsageAndBillingPage() {
         'Priority 24/7 High-Availability SLA',
       ],
       isCurrent: isEnterprise,
-      popular: true,
+      popular: isEnterprise,
     },
   ];
 
@@ -210,34 +215,46 @@ export default function UsageAndBillingPage() {
                 Current Workspace Plan
               </span>
               <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30 uppercase tracking-wide">
-                {currentPlan.toUpperCase()}
+                {isDeveloper ? 'DEVELOPER' : isEnterprise ? 'ENTERPRISE' : isPro ? 'PRO STUDIO' : isCommunity ? 'COMMUNITY' : 'TRIAL'}
               </span>
               <span className="text-[11px] text-muted-foreground">
-                • {isDeveloper ? 'Developer Tier (Lifetime)' : isUserPremium ? 'Premium Activated' : 'Free Tier'}
+                • {isDeveloper ? 'Developer Tier (Lifetime)' : isEnterprise ? 'Enterprise Fleet Activated (₹299)' : isPro ? 'Professional Studio Activated (₹99)' : isCommunity ? 'Community Plan Activated (₹29)' : 'Community Trial (₹0)'}
               </span>
             </div>
 
             <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground tracking-tight">
-              {usageData?.planName || 'Enterprise Voice Fleet'}
+              {usageData?.planName || (isDeveloper ? 'Developer Supreme Fleet' : isEnterprise ? 'Enterprise Voice Fleet' : isPro ? 'Professional Studio' : isCommunity ? 'Community Plan' : 'Community Trial')}
             </h2>
 
             <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl leading-relaxed">
-              Dedicated multi-bot voice routing, bounded job queues, and isolated WebRTC media streaming for production Discord communities.
+              {isDeveloper
+                ? 'Unrestricted supreme access across all 27+ bots and all workspaces with zero limitations.'
+                : isEnterprise
+                ? 'Dedicated multi-bot voice routing, dedicated WebSocket media gateway (:3001), and priority 24/7 stay.'
+                : isPro
+                ? 'High-fidelity 320kbps audio pipeline, 10,000% volume overdrive, 24/7 voice stay, and up to 25 bots.'
+                : isCommunity
+                ? 'Standard 128kbps audio pipeline, 5 fleet bots, and unlimited command invocations.'
+                : '10 total fleet command uses with up to 5 developer fleet worker bots.'}
             </p>
 
             {/* Quick Feature Pills */}
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-md bg-secondary/70 border border-border text-foreground/90">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>99.99% High Availability SLA</span>
+                <span>{isEnterprise || isDeveloper ? '99.99% High Availability SLA' : isPro ? 'Priority Support SLA' : 'Standard SLA'}</span>
               </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-md bg-secondary/70 border border-border text-foreground/90">
                 <Radio className="w-3.5 h-3.5 text-primary" />
-                <span>Dedicated Media Gateway (:3001)</span>
+                <span>{isEnterprise || isDeveloper ? 'Dedicated Media Gateway (:3001)' : isPro ? '320kbps Studio Pipeline' : 'Shared Gateway'}</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-md bg-secondary/70 border border-border text-foreground/90">
+                <Volume2 className="w-3.5 h-3.5 text-purple-400" />
+                <span>{isPro || isEnterprise || isDeveloper ? '10,000% Volume Overdrive' : '200% Volume Limit'}</span>
               </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-md bg-secondary/70 border border-border text-foreground/90">
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
-                <span>Opus 48kHz / 320kbps</span>
+                <span>{isPro || isEnterprise || isDeveloper ? 'Opus 48kHz / 320kbps' : 'Opus 48kHz / 128kbps'}</span>
               </span>
             </div>
           </div>
@@ -472,9 +489,9 @@ export default function UsageAndBillingPage() {
                   ? 'Lifetime Access (Developer)'
                   : userTier?.expiresAt
                   ? new Date(userTier.expiresAt).toLocaleDateString()
-                  : isUserPremium
-                  ? 'Lifetime'
-                  : 'Free Tier (No Expiration)'}
+                  : userTier?.tier && userTier.tier !== 'trial'
+                  ? 'Lifetime Access'
+                  : 'Active Community Trial'}
               </strong>
             </div>
           </div>
