@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/server/db/prisma';
 import { signSessionToken, COOKIE_NAME } from '@/server/security/jwt';
 import { AuditService } from '@/server/services/audit.service';
+import { PremiumService } from '@/server/services/premium.service';
 
 function getBaseUrl(request: NextRequest): string {
   const proto = request.headers.get('x-forwarded-proto') || 'https';
@@ -152,6 +153,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Resolve effective tier for this user
+    const userTier = await PremiumService.getUserTier(discordUser.id);
+    const effectivePlan = isDeveloper ? 'developer' : userTier.tier;
+
     // Create default workspace if user still has none
     if (!defaultWorkspaceId) {
       const ownedWs = await prisma.workspace.findFirst({
@@ -165,7 +170,7 @@ export async function GET(request: NextRequest) {
           data: {
             owner_user_id: user.id,
             name: `${user.username}'s Fleet`,
-            plan_id: isDeveloper ? 'enterprise' : 'free',
+            plan_id: effectivePlan,
           },
         });
 
@@ -179,6 +184,16 @@ export async function GET(request: NextRequest) {
 
         defaultWorkspaceId = workspace.id;
       }
+    }
+
+    // Keep all owned workspaces synchronized with effectivePlan
+    try {
+      await prisma.workspace.updateMany({
+        where: { owner_user_id: user.id },
+        data: { plan_id: effectivePlan },
+      });
+    } catch (syncErr) {
+      console.warn('[OAuthCallback] Could not sync workspace plan_id:', syncErr);
     }
 
     // Generate JWT session
