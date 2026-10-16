@@ -189,6 +189,17 @@ export class BotProfileService {
       });
     }
 
+    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
+    const isRedirectBot = (bot: { application_id?: string | null; operational_role?: string | null }) => {
+      return (
+        bot.operational_role === 'oauth_redirect' ||
+        (bot.application_id && redirectClientId && bot.application_id.trim() === redirectClientId)
+      );
+    };
+
+    // Permanently protect OAuth bot: never modify its username, name, bio, avatar, or banner
+    botsToUpdate = botsToUpdate.filter((b) => !isRedirectBot(b));
+
     if (botsToUpdate.length === 0) {
       return {
         success: true,
@@ -237,6 +248,18 @@ export class BotProfileService {
 
     // Function to update an individual bot with independent retries
     const updateSingleBot = async (bot: any, i: number): Promise<BotProfileUpdateResult> => {
+      if (isRedirectBot(bot)) {
+        return {
+          botId: bot.id,
+          displayName: 'Roynix Loud',
+          success: true,
+          avatarUpdated: false,
+          bannerUpdated: false,
+          bioUpdated: false,
+          statusUpdated: false,
+          error: 'Protected OAuth bot (Roynix Loud)',
+        };
+      }
       try {
         let finalAvatar = profileData?.avatarUrl;
         let finalBanner = profileData?.bannerUrl;

@@ -47,6 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     currentWorkspace,
     setCurrentWorkspaceId,
     currentUser,
+    isLoading,
     activeVoiceSession,
     triggerEmergencyStop,
   } = useWorkspace();
@@ -55,6 +56,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+
+  // 1. If on login page, render clean standalone layout without website shell or background
+  if (pathname === '/login') {
+    return <>{children}</>;
+  }
+
+  // 2. Prevent flashing dashboard or operator account before authentication
+  if (isLoading || !currentUser) {
+    return (
+      <div className="min-h-screen w-full bg-[#0d0c14] flex flex-col items-center justify-center space-y-4">
+        <div className="w-8 h-8 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs text-muted-foreground font-medium">Verifying studio access...</p>
+      </div>
+    );
+  }
 
   const navGroups: NavGroup[] = [
     {
@@ -213,7 +229,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
               )}
               <span className="text-xs font-medium hidden lg:inline max-w-[100px] truncate text-foreground">
-                {currentUser?.username || 'Operator'}
+                {currentUser?.username || 'User'}
               </span>
               <ChevronDown className="w-3 h-3 text-muted-foreground" />
             </button>

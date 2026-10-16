@@ -104,6 +104,16 @@ export async function PATCH(
     const body = await request.json();
     const data = UpdateBotSchema.parse(body);
 
+    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
+    const isOAuthBot =
+      bot.operational_role === 'oauth_redirect' ||
+      (bot.application_id && bot.application_id.trim() === redirectClientId);
+
+    if (isOAuthBot) {
+      data.displayName = 'Roynix Loud';
+      data.operationalRole = 'oauth_redirect';
+    }
+
     const updated = await prisma.botApplication.update({
       where: { id: botId },
       data: {
