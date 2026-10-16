@@ -101,8 +101,21 @@ describe('DiscordBotService (PRD Section 6.2, 7.1, 7.5, 9.1)', () => {
       content: '!help',
       author: { bot: false, id: '788970167907778562' },
       mentions: { has: () => false },
-      reply: async (text: string) => {
-        replyMessage = text;
+      reply: async (arg: any) => {
+        if (typeof arg === 'string') {
+          replyMessage = arg;
+        } else if (arg && arg.embeds && arg.embeds[0]) {
+          replyMessage = JSON.stringify(arg.embeds[0].data || arg.embeds[0]);
+        }
+      },
+      channel: {
+        send: async (arg: any) => {
+          if (typeof arg === 'string') {
+            replyMessage = arg;
+          } else if (arg && arg.embeds && arg.embeds[0]) {
+            replyMessage = JSON.stringify(arg.embeds[0].data || arg.embeds[0]);
+          }
+        },
       },
     } as any;
 
@@ -231,12 +244,20 @@ describe('DiscordBotService (PRD Section 6.2, 7.1, 7.5, 9.1)', () => {
       delete: async () => {
         deleted = true;
       },
-      reply: async (text: string) => {
-        replyText = text;
+      reply: async (arg: any) => {
+        if (typeof arg === 'string') {
+          replyText = arg;
+        } else if (arg && arg.embeds && arg.embeds[0]) {
+          replyText = JSON.stringify(arg.embeds[0].data || arg.embeds[0]);
+        }
       },
       channel: {
-        send: async (text: string) => {
-          replyText = text;
+        send: async (arg: any) => {
+          if (typeof arg === 'string') {
+            replyText = arg;
+          } else if (arg && arg.embeds && arg.embeds[0]) {
+            replyText = JSON.stringify(arg.embeds[0].data || arg.embeds[0]);
+          }
         },
       },
     } as any;
@@ -246,6 +267,49 @@ describe('DiscordBotService (PRD Section 6.2, 7.1, 7.5, 9.1)', () => {
     await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', helpMsg);
     expect(deleted).toBe(true); // Command message was automatically deleted
     expect(replyText).toContain('Studio Fleet Commands'); // Help response is shown!
+    expect(replyText).not.toContain('OAuth & Premium Bot'); // OAuth bot line removed!
+
+    // Test 2b: Status command (!status) by Developer (authorized)
+    const statusMsg = {
+      id: 'test_msg_status_' + Date.now(),
+      content: '!status',
+      author: { bot: false, id: '788970167907778562' },
+      mentions: { has: () => false },
+      delete: async () => {
+        deleted = true;
+      },
+      channel: {
+        send: async (arg: any) => {
+          replyText = JSON.stringify(arg.embeds?.[0]?.data || arg);
+        },
+      },
+    } as any;
+    deleted = false;
+    replyText = '';
+    await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', statusMsg);
+    expect(deleted).toBe(true);
+    expect(replyText).toContain('LOUD Studio Fleet Diagnostics');
+
+    // Test 2c: Ping command (!ping) by Developer (authorized)
+    const pingMsg = {
+      id: 'test_msg_ping_' + Date.now(),
+      content: '!ping',
+      author: { bot: false, id: '788970167907778562' },
+      mentions: { has: () => false },
+      delete: async () => {
+        deleted = true;
+      },
+      channel: {
+        send: async (arg: any) => {
+          replyText = JSON.stringify(arg.embeds?.[0]?.data || arg);
+        },
+      },
+    } as any;
+    deleted = false;
+    replyText = '';
+    await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', pingMsg);
+    expect(deleted).toBe(true);
+    expect(replyText).toContain('Fleet WebSocket Heartbeat');
 
     // Test 3: Help command (!help) by unauthorized stranger (not developer, not workspace owner/admin, not on site)
     // Must NOT delete message and must NOT reply

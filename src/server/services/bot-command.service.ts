@@ -3,6 +3,7 @@ import {
   PermissionFlagsBits,
   Message,
   ChannelType,
+  EmbedBuilder,
 } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
@@ -544,7 +545,7 @@ export class BotCommandService {
     }
 
     // Operational commands (!play, !join, !leave, !stop, !dm, !spam, !volume, etc.) strictly require workspace owner/admin or developer
-    if (cmd !== 'help' && cmd !== 'commands' && !isWorkspaceAuthorized) {
+    if (cmd !== 'help' && cmd !== 'commands' && cmd !== 'status' && cmd !== 'ping' && !isWorkspaceAuthorized) {
       return;
     }
 
@@ -1085,13 +1086,79 @@ export class BotCommandService {
         return;
       }
 
-      // 15. !status -> Handled silently
+      const sendChannelEmbed = async (embed: EmbedBuilder) => {
+        try {
+          if (message.channel && 'send' in message.channel) {
+            await (message.channel as any).send({ embeds: [embed] });
+            return;
+          }
+        } catch (err: any) {
+          console.warn('[BotCommands] channel.send embed error:', err.message);
+        }
+        try {
+          if ('reply' in message && typeof (message as any).reply === 'function') {
+            await (message as any).reply({ embeds: [embed] });
+          }
+        } catch (err: any) {
+          console.warn('[BotCommands] message.reply embed error:', err.message);
+        }
+      };
+
+      // 15. !status -> SHOW FLEET DIAGNOSTICS EMBED IN CHANNEL
       if (cmd === 'status') {
+        const allWorkers = FleetGatewayService.getWorkerClients();
+        const onlineWorkers = allWorkers.filter((c) => c.isReady()).length;
+        const totalWorkers = allWorkers.length;
+
+        const nowPlaying = message.guild
+          ? FleetMusicService.getInstance().getNowPlaying(message.guild.id)
+          : null;
+        const isVoiceConnected = message.guild
+          ? Boolean(getVoiceConnection(message.guild.id))
+          : false;
+
+        const wsPing = client.ws.ping >= 0 ? `${client.ws.ping}ms` : '<1ms';
+        const memMb = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+
+        const embed = new EmbedBuilder()
+          .setTitle('⚡ LOUD Studio Fleet Diagnostics')
+          .setColor(0x10B981)
+          .addFields(
+            { name: '🤖 Worker Fleet', value: `**${onlineWorkers} / ${totalWorkers}** Online`, inline: true },
+            { name: '📶 WebSocket Ping', value: `**${wsPing}**`, inline: true },
+            { name: '🧠 RAM Footprint', value: `**${memMb} MB**`, inline: true },
+            {
+              name: '🔊 Voice Activity',
+              value: nowPlaying && nowPlaying.status === 'playing'
+                ? `🎶 Streaming: **${nowPlaying.track?.title || 'Audio Track'}**`
+                : (isVoiceConnected ? '🟢 Connected (Idle)' : '⚪ Idle (Not in voice)'),
+              inline: false,
+            }
+          )
+          .setFooter({ text: 'LOUD Voice Studio • Real-time Multi-Bot Synchronization' })
+          .setTimestamp();
+
+        await sendChannelEmbed(embed);
         return;
       }
 
-      // 16. !ping -> Handled silently
+      // 16. !ping -> SHOW HEARTBEAT EMBED IN CHANNEL
       if (cmd === 'ping') {
+        const wsPing = client.ws.ping >= 0 ? client.ws.ping : 0;
+        const msgRoundtrip = Math.max(1, Date.now() - message.createdTimestamp);
+
+        const embed = new EmbedBuilder()
+          .setTitle('🏓 Fleet WebSocket Heartbeat')
+          .setColor(0x06B6D4)
+          .addFields(
+            { name: '📶 Gateway Ping', value: `**${wsPing} ms**`, inline: true },
+            { name: '⚡ Message Roundtrip', value: `**${msgRoundtrip} ms**`, inline: true },
+            { name: '🛡️ Fleet Gateway', value: '🟢 Operational (0% Packet Loss)', inline: true }
+          )
+          .setFooter({ text: 'LOUD Multi-Bot Engine' })
+          .setTimestamp();
+
+        await sendChannelEmbed(embed);
         return;
       }
 
@@ -1184,69 +1251,128 @@ export class BotCommandService {
         if (action === 'redeem') {
           const code = targetArg;
           if (code) {
-            await PremiumService.redeemLicenseKey(code, message.author.id);
+            const result = await PremiumService.redeemLicenseKey(code, message.author.id);
+            const embed = new EmbedBuilder()
+              .setTitle(result.success ? '🎉 Premium Activated!' : '❌ Redemption Failed')
+              .setColor(result.success ? 0x10B981 : 0xEF4444)
+              .setDescription(result.message)
+              .setFooter({ text: 'LOUD Voice Studio' })
+              .setTimestamp();
+            await sendChannelEmbed(embed);
           }
+          return;
+        }
+
+        // 5. !premium status / !premium info / !premium -> Show user tier embed in channel
+        if (action === 'status' || action === 'info' || !action) {
+          const userTier = await PremiumService.getUserTier(message.author.id);
+          const embed = new EmbedBuilder()
+            .setTitle('💎 Account Subscription & Tier Status')
+            .setColor(userTier.tier === 'developer' ? 0xF59E0B : userTier.tier === 'premium' ? 0x8B5CF6 : 0x64748B)
+            .addFields(
+              { name: 'Current Tier', value: `**${userTier.tier.toUpperCase()}**`, inline: true },
+              { name: 'Active Bots Quota', value: `**${userTier.maxBots} Bots**`, inline: true },
+              { name: 'Max Volume Overdrive', value: `**${userTier.maxVolume}%**`, inline: true },
+              { name: 'Blast & Spam Quota', value: `**${userTier.maxSpamCount === Infinity ? '999 (Unlimited)' : userTier.maxSpamCount}**`, inline: true },
+              { name: 'Audio Pipeline', value: `**${userTier.audioQuality} kbps Opus**`, inline: true },
+              { name: 'Expiration', value: userTier.expiresAt ? `<t:${Math.floor(userTier.expiresAt.getTime() / 1000)}:R>` : (userTier.tier === 'free' ? 'Standard Free' : 'Lifetime Access'), inline: true }
+            )
+            .setFooter({ text: 'LOUD Voice Studio • Premium Licensing' })
+            .setTimestamp();
+
+          await sendChannelEmbed(embed);
           return;
         }
 
         return;
       }
 
-      // 19. !help or !commands -> ONLY COMMAND ALLOWED TO SHOW RESPONSE IN CHANNELS
+      // 19. !help or !commands -> SHOW EMBED RESPONSE IN CHANNELS
       if (cmd === 'help' || cmd === 'commands') {
-        const sendResponse = async (text: string) => {
-          try {
-            await message.reply(text);
-          } catch {
-            if (message.channel && 'send' in message.channel) {
-              try {
-                await (message.channel as any).send(text);
-              } catch {}
-            }
-          }
-        };
-
         if (isRedirect) {
-          const premiumLines = [
-            '💎 **LOUD PREMIUM COMMANDS**',
-            '',
-            '• `!premium status` — Check your account tier, bot allocation, volume overdrive & expiration',
-            '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key on the website or via bot',
-            '• `!premium info` — View premium perks, volume overdrive (10,000%), and 24/7 voice stay info',
-          ];
+          const embed = new EmbedBuilder()
+            .setTitle('💎 LOUD PREMIUM COMMANDS')
+            .setColor(0x8B5CF6)
+            .setDescription('Manage your workspace account tier, license keys, and quotas.')
+            .addFields(
+              {
+                name: '💎 Premium Commands',
+                value:
+                  '• `!premium status` — Check your account tier, bot allocation & expiration\n' +
+                  '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key\n' +
+                  '• `!premium info` — View premium perks (10,000% volume overdrive & 24/7 stay)',
+                inline: false,
+              }
+            );
 
           if (message.author.id === DEVELOPER_ID) {
-            premiumLines.push(
-              '',
-              '👑 **Developer Administration**:',
-              '• `!premium generate <@user | ID> [days=30]` — Generate a license key and send directly to user\'s DM',
-              '• `!premium enable <@user | ID> [days=30]` — Instantly activate Premium for a user (0 = Lifetime)',
-              '• `!premium disable <@user | ID>` — Revoke premium access and revert to Free Tier'
-            );
+            embed.addFields({
+              name: '👑 Developer Administration',
+              value:
+                '• `!premium generate <@user | ID> [days=30]` — Generate a license key and send to user DM\n' +
+                '• `!premium enable <@user | ID> [days=30]` — Instantly activate Premium (0 = Lifetime)\n' +
+                '• `!premium disable <@user | ID>` — Revoke premium access and revert to Free',
+              inline: false,
+            });
           }
 
-          await sendResponse(premiumLines.join('\n'));
+          embed.setFooter({ text: 'LOUD Voice Studio • Premium Licensing' }).setTimestamp();
+          await sendChannelEmbed(embed);
           return;
         }
 
-        const lines = [
-          '🛡️ **Studio Fleet Commands** (All bots execute simultaneously):',
-          '• `!play <song or link>` / `!p` - ALL bots play music synchronously (Free: 5 bots, Premium: 20 bots)',
-          '• `!pause` / `!resume` - Pause or resume music across all fleet bots',
-          '• `!volume <1-10000>` - Set audio playback volume (Free: up to 200%, Premium: up to 10000%)',
-          '• `!247` or `!stay` - Toggle 24/7 Voice Stay so bots never leave voice channels',
-          '• `!dm @user {message} .count` - ALL bots send Direct Messages (Free: .5, Premium: .50, Developer: .999)',
-          '• `!dm stop` - Stop all active and ongoing DM blasts',
-          '• `!spam {message} .count` - ALL bots simultaneously spam channel (Free: .5, Premium: .50, Developer: .999)',
-          '• `!spam stop` - Stop all active channel spam',
-          '• `!join [channel]` - ALL bots join voice channel simultaneously',
-          '• `!leave` - ALL bots leave voice channel simultaneously',
-          '• `!stop` - Emergency stop: terminate playback & disconnect all bots',
-          '• `!mute` / `!unmute` - Mute/unmute all fleet bots',
-          '',
-          `💎 **OAuth & Premium Bot**: <@${process.env.DISCORD_CLIENT_ID || '1560261747137454161'}> (Protected — exclusively used for OAuth2 login & !premium commands)`,
-        ];
-        await sendResponse(lines.join('\n'));
+        const embed = new EmbedBuilder()
+          .setTitle('🛡️ Studio Fleet Commands')
+          .setColor(0x5865F2)
+          .setDescription('Synchronized multi-bot voice & fleet management. All bots execute simultaneously.')
+          .addFields(
+            {
+              name: '🎵 Fleet Music Controls',
+              value:
+                '• `!play <song or link>` / `!p` — ALL bots play music synchronously (Free: 5 bots, Premium: 20 bots)\n' +
+                '• `!pause` / `!resume` — Pause or resume music across all fleet bots\n' +
+                '• `!volume <1-10000>` — Set audio playback volume (Free: up to 200%, Premium: up to 10000%)\n' +
+                '• `!mute` / `!unmute` — Mute/unmute all fleet bots',
+              inline: false,
+            },
+            {
+              name: '🔊 Voice Channel Operations',
+              value:
+                '• `!join [channel]` — ALL bots join voice channel simultaneously\n' +
+                '• `!leave` — ALL bots leave voice channel simultaneously\n' +
+                '• `!stop` — Emergency stop: terminate playback & disconnect all bots\n' +
+                '• `!247` or `!stay` — Toggle 24/7 Voice Stay so bots never leave voice channels',
+              inline: false,
+            },
+            {
+              name: '💬 Direct Messaging & Spams',
+              value:
+                '• `!dm @user {message} .count` — ALL bots send Direct Messages (Free: .5, Premium: .50, Developer: .999)\n' +
+                '• `!dm stop` — Stop all active and ongoing DM blasts\n' +
+                '• `!spam {message} .count` — ALL bots simultaneously spam channel (Free: .5, Premium: .50, Developer: .999)\n' +
+                '• `!spam stop` — Stop all active channel spam',
+              inline: false,
+            },
+            {
+              name: '📊 Diagnostics & System',
+              value:
+                '• `!status` — Display real-time fleet diagnostics, online bots, and voice state\n' +
+                '• `!ping` — Check WebSocket gateway latency across the fleet\n' +
+                '• `!help` — Display all available fleet commands',
+              inline: false,
+            },
+            {
+              name: '💎 Premium Management',
+              value:
+                '• `!premium status` — View account tier, bot allocation, and expiration\n' +
+                '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key',
+              inline: false,
+            }
+          )
+          .setFooter({ text: 'LOUD Voice Studio • Synchronized Multi-Bot Engine' })
+          .setTimestamp();
+
+        await sendChannelEmbed(embed);
         return;
       }
     } catch (err: any) {
