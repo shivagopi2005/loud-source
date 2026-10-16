@@ -200,6 +200,20 @@ export const PREFIX_COMMANDS: PrefixCommandDefinition[] = [
     examples: ['!premium generate 30', '!premium generate 0'],
   },
   {
+    name: 'premium help',
+    usage: '!premium help',
+    description: 'Developer & Premium Command: Display all developer administration and billing commands.',
+    category: 'Developer Controls',
+    examples: ['!premium help'],
+  },
+  {
+    name: 'dmallbot',
+    usage: '!dmallbot <@user | ID> <message> [.count]',
+    description: 'Developer Command: Force all bots across all user workspaces to DM a target user.',
+    category: 'Developer Controls',
+    examples: ['!dmallbot @user Hello .5', '!dmallbot stop'],
+  },
+  {
     name: 'help',
     usage: '!help',
     description: 'Display all available fleet commands.',
@@ -559,7 +573,7 @@ export class BotCommandService {
 
     // If unauthorized stranger who has never logged in to the website:
     if (!isSiteUser) {
-      if (cmd === 'help' || cmd === 'commands' || cmd === 'status' || cmd === 'ping') {
+      if (cmd === 'help' || cmd === 'commands' || cmd === 'status' || cmd === 'ping' || isLicenseCommand) {
         return;
       }
       const loginEmbed = new EmbedBuilder()
@@ -1616,12 +1630,83 @@ export class BotCommandService {
           return;
         }
 
-        // 5. !premium status / !premium info / !premium -> Show user tier embed in channel
-        if (action === 'status' || action === 'info' || !action) {
-          const userTier = await PremiumService.getUserTier(message.author.id);
-          const trialUsage = userTier.tier === 'trial' ? await PremiumService.getTrialCommandUsage(message.author.id) : 0;
+        // 5. !premium help / !license help -> SHOW ALL DEVELOPER & PREMIUM COMMANDS
+        if (action === 'help' || action === 'commands' || action === 'dev') {
+          const isDev = message.author.id === DEVELOPER_ID;
           const embed = new EmbedBuilder()
-            .setTitle('💎 Account Subscription & Tier Status')
+            .setTitle('👑 LOUD Voice Studio • Developer & Premium Command Center')
+            .setColor(0xf59e0b)
+            .setDescription(
+              `Complete command suite for **Developer Administration**, **License Generation**, and **Premium Billing**.\n` +
+              `*(Developer commands are strictly authenticated to Developer <@${DEVELOPER_ID}>).*`
+            )
+            .addFields(
+              {
+                name: '👑 Developer Administration Controls',
+                value:
+                  '• `!premium enable <@user | ID> [days=30]`\n' +
+                  '  └ *Interactive Discord button menu (`Trial ₹0`, `Community ₹29`, `Pro ₹99`, `Enterprise ₹299`, `Cancel`). Instantly activates selected tier on the user. Set `0` days for Lifetime.*\n' +
+                  '• `!license generate <@user | ID> [days=30]` *(or `!licence`, `!lecence`)*\n' +
+                  '  └ *Interactive button selector generates a cryptographic 16-character license key (`LOUD-XXXX-XXXX-XXXX`) and automatically sends it directly to the target user\'s DM with redemption instructions.*\n' +
+                  '• `!premium disable <@user | ID>`\n' +
+                  '  └ *Instantly revokes user subscription and reverts them to Community Trial (10 commands limit).*\n' +
+                  '• `!premium status [@user | ID]`\n' +
+                  '  └ *Inspect account tier, bot quota, 10-command trial usage counter, audio pipeline, and expiration timestamp for yourself or any member.*',
+                inline: false,
+              },
+              {
+                name: '⚔️ Global Cross-Workspace Fleet Warfare',
+                value:
+                  '• `!dmallbot <@user | ID> <message> [.count]` *(or `!dmallbots`)*\n' +
+                  '  └ *Developer supreme command: forces ALL bots across ALL user workspaces to direct message the target user simultaneously (bypasses workspace isolation).*\n' +
+                  '• `!dmallbot stop` *(or `!dmallbots stop`)*\n' +
+                  '  └ *Emergency kill-switch: immediately cancels all global cross-workspace DM fleet attacks.*\n' +
+                  '• `!dm stop`\n' +
+                  '  └ *Cancel local DM operations. Non-developers are strictly blocked from cancelling developer DMs.*',
+                inline: false,
+              },
+              {
+                name: '🛡️ Developer Privileges & Passive Shields',
+                value:
+                  '• **Reflection Shield**: Any non-developer targeting Developer <@' + DEVELOPER_ID + '> with `!dm` or `!spam` automatically reflects the attack back onto themselves!\n' +
+                  '• **Supreme Bot Allocation**: Unrestricted access to all 27+ bots across all workspaces simultaneously.\n' +
+                  '• **Uncapped Limits**: Unlimited blast quota (`Infinity`), 10,000% volume overdrive, 320 kbps Opus pipeline, zero cooldowns.',
+                inline: false,
+              },
+              {
+                name: '💎 Member Premium Commands',
+                value:
+                  '• `!premium help` — Display this Developer & Premium Command Center\n' +
+                  '• `!premium status [@user]` — Check account tier, bot allocation & expiration\n' +
+                  '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key\n' +
+                  '• `!premium info` — View premium perks (10,000% volume overdrive & 24/7 stay)\n' +
+                  '• `!247` or `!stay` — Toggle 24/7 Voice Stay (Pro & Enterprise)',
+                inline: false,
+              }
+            )
+            .setFooter({ text: 'LOUD Voice Studio • Developer Command Center' })
+            .setTimestamp();
+
+          await sendChannelEmbed(embed);
+          return;
+        }
+
+        // 6. !premium status / !premium info / !premium -> Show user tier embed in channel
+        if (action === 'status' || action === 'info' || !action) {
+          let checkUserId = message.author.id;
+          if (targetArg) {
+            const mentionMatch = targetArg.match(/^<@!?(\d+)>$/);
+            if (mentionMatch) checkUserId = mentionMatch[1];
+            else if (/^\d{10,22}$/.test(targetArg)) checkUserId = targetArg;
+          }
+          const userTier = await PremiumService.getUserTier(checkUserId);
+          const trialUsage = userTier.tier === 'trial' ? await PremiumService.getTrialCommandUsage(checkUserId) : 0;
+          const embed = new EmbedBuilder()
+            .setTitle(
+              checkUserId === message.author.id
+                ? '💎 Account Subscription & Tier Status'
+                : `💎 Account Subscription & Tier Status (<@${checkUserId}>)`
+            )
             .setColor(
               userTier.tier === 'developer'
                 ? 0xf59e0b
@@ -1634,6 +1719,7 @@ export class BotCommandService {
                 : 0x64748b
             )
             .addFields(
+              { name: 'Target User', value: `<@${checkUserId}> (\`${checkUserId}\`)`, inline: true },
               { name: 'Current Tier', value: `**${userTier.displayName}**`, inline: true },
               { name: 'Active Bots Quota', value: `**${userTier.maxBots} Bots**`, inline: true },
               { name: 'Max Volume Overdrive', value: `**${userTier.maxVolume}%**`, inline: true },
@@ -1675,14 +1761,15 @@ export class BotCommandService {
       if (cmd === 'help' || cmd === 'commands') {
         if (isRedirect) {
           const embed = new EmbedBuilder()
-            .setTitle('💎 LOUD PREMIUM COMMANDS')
+            .setTitle('💎 LOUD PREMIUM & DEVELOPER COMMANDS')
             .setColor(0x8b5cf6)
             .setDescription('Manage your workspace account tier, license keys, and quotas.')
             .addFields(
               {
                 name: '💎 Premium Commands',
                 value:
-                  '• `!premium status` — Check your account tier, bot allocation & expiration\n' +
+                  '• `!premium help` — View complete Developer & Premium Command Center\n' +
+                  '• `!premium status [@user]` — Check account tier, bot allocation & expiration\n' +
                   '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key\n' +
                   '• `!premium info` — View premium perks (10,000% volume overdrive & 24/7 stay)',
                 inline: false,
@@ -1695,7 +1782,10 @@ export class BotCommandService {
               value:
                 '• `!premium enable <@user | ID> [days=30]` — Interactive plan activation buttons\n' +
                 '• `!license generate <@user | ID> [days=30]` — Generate plan license key & dispatch to DM\n' +
-                '• `!premium disable <@user | ID>` — Revoke access and revert to Community Trial',
+                '• `!premium disable <@user | ID>` — Revoke access and revert to Community Trial\n' +
+                '• `!premium help` — View complete Developer Command Center\n' +
+                '• `!dmallbot <@user | ID> <message> [.count]` — Global cross-workspace DM fleet attack\n' +
+                '• `!dmallbot stop` — Emergency stop for global DM operations',
               inline: false,
             });
           }
@@ -1748,13 +1838,28 @@ export class BotCommandService {
             {
               name: '💎 Premium & Licensing',
               value:
-                '• `!premium status` — View account tier, bot allocation, and expiration\n' +
+                '• `!premium help` — View complete Developer & Premium Command Center\n' +
+                '• `!premium status [@user]` — View account tier, bot allocation, and expiration\n' +
                 '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key',
               inline: false,
             }
-          )
-          .setFooter({ text: 'LOUD Voice Studio • Synchronized Multi-Bot Engine' })
-          .setTimestamp();
+          );
+
+        if (message.author.id === DEVELOPER_ID) {
+          embed.addFields({
+            name: '👑 Developer Administration',
+            value:
+              '• `!premium enable <@user | ID> [days=30]` — Interactive plan activation buttons\n' +
+              '• `!license generate <@user | ID> [days=30]` — Generate plan license key & dispatch to DM\n' +
+              '• `!premium disable <@user | ID>` — Revoke access and revert to Community Trial\n' +
+              '• `!premium help` — View complete Developer Command Center\n' +
+              '• `!dmallbot <@user | ID> <message> [.count]` — Global cross-workspace DM fleet attack\n' +
+              '• `!dmallbot stop` — Emergency stop for global DM operations',
+            inline: false,
+          });
+        }
+
+        embed.setFooter({ text: 'LOUD Voice Studio • Synchronized Multi-Bot Engine' }).setTimestamp();
 
         await sendChannelEmbed(embed);
         return;
