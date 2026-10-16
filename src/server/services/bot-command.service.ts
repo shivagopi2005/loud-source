@@ -1403,13 +1403,32 @@ export class BotCommandService {
 
             await PremiumService.enableUserTier(targetUserId, selectedTier, effectiveDays, DEVELOPER_ID);
 
+            // Attempt DM notification to target user
+            let dmSent = false;
+            try {
+              const targetUser = await client.users.fetch(targetUserId);
+              if (targetUser) {
+                await targetUser.send(
+                  `🎉 **[ROYNIX LOUD STUDIO PLAN ACTIVATED]**\n` +
+                  `Developer <@${DEVELOPER_ID}> has activated **${tierName}** on your account!\n\n` +
+                  `⏳ **Duration**: **${durationLabel}**\n` +
+                  `🤖 **Max Bots**: ${selectedTier === 'enterprise' ? 100 : selectedTier === 'pro' ? 20 : 5} Bots\n\n` +
+                  `You can now use all your tier commands in Discord or on our Web Dashboard at ${process.env.NEXT_PUBLIC_APP_URL || 'https://roynix.online'}!`
+                );
+                dmSent = true;
+              }
+            } catch (dmErr: any) {
+              dmSent = false;
+            }
+
             const confirmedEmbed = new EmbedBuilder()
-              .setTitle('✅ Plan Activated Successfully')
+              .setTitle(dmSent ? '✅ Plan Activated Successfully' : '⚠️ Plan Activated (User DM Failed)')
               .setColor(0x10b981)
               .setDescription(
                 `Successfully activated **${tierName}** for <@${targetUserId}>!\n\n` +
                 `⏳ **Duration**: **${durationLabel}**\n` +
-                `🤖 **Max Bots**: ${selectedTier === 'enterprise' ? 100 : selectedTier === 'pro' ? 20 : 5} Bots`
+                `🤖 **Max Bots**: ${selectedTier === 'enterprise' ? 100 : selectedTier === 'pro' ? 20 : 5} Bots\n` +
+                `📬 **User DM**: ${dmSent ? '✅ Delivered to user DM' : '⚠️ User DMs closed or blocked (Plan is active)'}`
               )
               .setFooter({ text: 'LOUD Voice Studio • Tier Updated' })
               .setTimestamp();
@@ -1527,19 +1546,42 @@ export class BotCommandService {
 
           const collector = promptMessage.createMessageComponentCollector({
             componentType: ComponentType.Button,
-            time: 60000,
+            time: 300000,
           });
+
+          let currentKey = '';
+          let currentTierName = '';
 
           collector.on('collect', async (interaction) => {
             if (interaction.user.id !== DEVELOPER_ID) {
               await interaction.reply({
-                content: '❌ Only the developer can generate license keys.',
+                content: '❌ Only the developer can manage license keys.',
                 ephemeral: true,
               });
               return;
             }
 
             const customId = interaction.customId;
+
+            // Developer clicked "Show License Key" button
+            if (customId.startsWith('btn_reveal_key_')) {
+              const revealedKey = customId.replace('btn_reveal_key_', '');
+              await interaction.reply({
+                content:
+                  `🔑 **Official LOUD Studio License Key**\n\n` +
+                  `👤 **Target User**: <@${targetUserId}> (\`${targetUserId}\`)\n` +
+                  (currentTierName ? `📦 **Plan Tier**: **${currentTierName}**\n` : '') +
+                  `⏳ **Duration**: **${durationLabel}**\n\n` +
+                  `\`\`\`\n${revealedKey}\n\`\`\`\n` +
+                  `**How to Redeem:**\n` +
+                  `• In Discord: Type \`!premium redeem ${revealedKey}\`\n` +
+                  `• Web Dashboard: ${process.env.NEXT_PUBLIC_APP_URL || 'https://roynix.online'}/usage\n\n` +
+                  `*(Only you can see this message. You can copy the code above and share it with the user privately).*`,
+                ephemeral: true,
+              });
+              return;
+            }
+
             if (customId.startsWith('btn_key_cancel')) {
               const cancelledEmbed = new EmbedBuilder()
                 .setTitle('❌ License Generation Cancelled')
@@ -1567,9 +1609,12 @@ export class BotCommandService {
               tierName = 'Enterprise Fleet (₹299)';
             }
 
+            currentTierName = tierName;
             const key = await PremiumService.generateLicenseKey(DEVELOPER_ID, effectiveDays, selectedTier);
+            currentKey = key;
 
-            // Send DM to target user
+            // Attempt to DM the key to the target user
+            let dmSent = false;
             try {
               const targetUser = await client.users.fetch(targetUserId);
               if (targetUser) {
@@ -1583,31 +1628,46 @@ export class BotCommandService {
                   `• In Discord: Type \`!premium redeem ${key}\`\n` +
                   `• On Website: Go to **Usage & Billing** (\`/usage\`) and redeem your key!`
                 );
+                dmSent = true;
               }
             } catch (dmErr: any) {
               console.warn(`[Premium] Could not DM user ${targetUserId}:`, dmErr.message);
+              dmSent = false;
             }
 
             const confirmedEmbed = new EmbedBuilder()
-              .setTitle('🔑 License Key Generated & Dispatched')
-              .setColor(0x10b981)
+              .setTitle(dmSent ? '🔑 License Key Generated & Dispatched' : '⚠️ License Key Generated (User DM Failed)')
+              .setColor(dmSent ? 0x10b981 : 0xf59e0b)
               .setDescription(
-                `Successfully created **${tierName}** license key and sent directly to <@${targetUserId}>'s DM!\n\n` +
-                `🔑 **Key**: \`${key}\`\n` +
-                `⏳ **Duration**: **${durationLabel}**`
+                dmSent
+                  ? `Successfully created **${tierName}** license key and sent directly to <@${targetUserId}>'s DM!\n\n` +
+                    `📦 **Plan Tier**: **${tierName}**\n` +
+                    `⏳ **Duration**: **${durationLabel}**\n` +
+                    `📬 **Delivery Status**: ✅ Delivered to User DM\n\n` +
+                    `🔒 *The license key is hidden from this channel for security. Click below if you need to copy it.*`
+                  : `Created **${tierName}** license key for <@${targetUserId}>, but **their Direct Messages are closed or blocked**!\n\n` +
+                    `📦 **Plan Tier**: **${tierName}**\n` +
+                    `⏳ **Duration**: **${durationLabel}**\n` +
+                    `⚠️ **Delivery Status**: ❌ Failed (User has DMs disabled)\n\n` +
+                    `🔒 *The license key is not shown here so others cannot steal it.* Click **"Show License Key"** below to view it privately.`
               )
               .setFooter({ text: 'LOUD Voice Studio • License Engine' })
               .setTimestamp();
 
-            await interaction.update({ embeds: [confirmedEmbed], components: [] });
-            collector.stop('generated');
+            const revealRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`btn_reveal_key_${key}`)
+                .setLabel('👁️ Show License Key')
+                .setStyle(dmSent ? ButtonStyle.Secondary : ButtonStyle.Primary)
+                .setEmoji('🔑')
+            );
+
+            await interaction.update({ embeds: [confirmedEmbed], components: [revealRow] });
           });
 
           collector.on('end', async (_, reason) => {
             if (reason === 'time' && promptMessage) {
-              try {
-                await promptMessage.edit({ components: [] });
-              } catch {}
+              // Button remains functional via global handleInteraction listener
             }
           });
 
@@ -1868,4 +1928,43 @@ export class BotCommandService {
       console.error('[BotCommands] Prefix command error:', err);
     }
   }
+
+  /**
+   * Handle persistent button interactions across all fleet bots (e.g. reveal license key)
+   */
+  public static async handleInteraction(client: Client, botId: string, interaction: any): Promise<void> {
+    try {
+      if (!interaction || !interaction.isButton || !interaction.isButton()) return;
+
+      const customId = interaction.customId;
+      if (customId && customId.startsWith('btn_reveal_key_')) {
+        if (interaction.user.id !== DEVELOPER_ID) {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+              content: '❌ Only the developer can view this license key.',
+              ephemeral: true,
+            });
+          }
+          return;
+        }
+
+        const key = customId.replace('btn_reveal_key_', '');
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({
+            content:
+              `🔑 **Official LOUD Studio License Key**\n\n` +
+              `\`\`\`\n${key}\n\`\`\`\n` +
+              `**Redemption Instructions:**\n` +
+              `• In Discord: Type \`!premium redeem ${key}\`\n` +
+              `• Web Dashboard: ${process.env.NEXT_PUBLIC_APP_URL || 'https://roynix.online'}/usage\n\n` +
+              `*(Only you can see this message. You can copy the code above and share it with the user).*`,
+            ephemeral: true,
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error('[BotCommands] Interaction handler error:', err);
+    }
+  }
 }
+

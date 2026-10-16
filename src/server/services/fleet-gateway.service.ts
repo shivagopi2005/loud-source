@@ -285,6 +285,13 @@ export class FleetGatewayService {
         );
       });
 
+      // Attach interaction listener for button clicks (e.g. reveal license key)
+      client.on('interactionCreate', (interaction) => {
+        BotCommandService.handleInteraction(client, botId, interaction).catch((err) =>
+          console.error(`[FleetGateway] Error in interactionCreate for bot ${botId}:`, err)
+        );
+      });
+
       const loginPromise = new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => {
           console.warn(`[FleetGateway] Connection timeout for bot ${botId}`);
