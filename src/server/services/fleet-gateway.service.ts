@@ -153,7 +153,118 @@ export class FleetGatewayService {
         clients.push(client);
       }
     }
+
+    // If workspace has no custom bots, check if workspace owner is on Free Tier (trial/free)
+    if (clients.length === 0) {
+      try {
+        const ws = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+          include: { owner: true },
+        });
+        const { PremiumService } = await import('./premium.service');
+        const tier = await PremiumService.getUserTier(ws?.owner?.discord_id || '');
+        if (!tier.isDeveloper && (tier.tier === 'trial' || tier.tier === 'free')) {
+          return this.getFreeTierDeveloperClients();
+        }
+      } catch {}
+    }
+
     return clients;
+  }
+
+  /**
+   * Retrieves the 5 designated developer fleet worker bots allocated for Free Tier usage.
+   */
+  public static async getFreeTierDeveloperBots(): Promise<any[]> {
+    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
+    const DEVELOPER_ID = '788970167907778562';
+
+    // 1. Look for bots owned by developer account
+    let bots = await prisma.botApplication.findMany({
+      where: {
+        workspace: {
+          owner: { discord_id: DEVELOPER_ID },
+        },
+        operational_role: { not: 'oauth_redirect' },
+        display_name: { not: 'Roynix Loud' },
+        application_id: { notIn: [redirectClientId, '1560261747137454161'].filter(Boolean) },
+        status: { notIn: ['removed', 'disabled'] },
+      },
+      include: {
+        credentials: {
+          select: {
+            id: true,
+            credential_version: true,
+            status: true,
+            created_at: true,
+            rotated_at: true,
+          },
+          orderBy: { credential_version: 'desc' },
+          take: 1,
+        },
+        guild_accesses: {
+          include: {
+            guild: {
+              select: { id: true, guild_id: true, display_name: true, verification_status: true },
+            },
+          },
+        },
+        group_memberships: {
+          include: { group: true },
+        },
+      },
+      orderBy: { created_at: 'asc' },
+      take: 5,
+    });
+
+    // Fallback if not found via workspace.owner
+    if (bots.length < 5) {
+      const existingIds = bots.map((b) => b.id);
+      const extraBots = await prisma.botApplication.findMany({
+        where: {
+          id: { notIn: existingIds },
+          operational_role: { not: 'oauth_redirect' },
+          display_name: { not: 'Roynix Loud' },
+          application_id: { notIn: [redirectClientId, '1560261747137454161'].filter(Boolean) },
+          status: { notIn: ['removed', 'disabled'] },
+        },
+        include: {
+          credentials: {
+            select: {
+              id: true,
+              credential_version: true,
+              status: true,
+              created_at: true,
+              rotated_at: true,
+            },
+            orderBy: { credential_version: 'desc' },
+            take: 1,
+          },
+          guild_accesses: {
+            include: {
+              guild: {
+                select: { id: true, guild_id: true, display_name: true, verification_status: true },
+              },
+            },
+          },
+          group_memberships: {
+            include: { group: true },
+          },
+        },
+        orderBy: { created_at: 'asc' },
+        take: 5 - bots.length,
+      });
+      bots = [...bots, ...extraBots];
+    }
+
+    return bots;
+  }
+
+  /**
+   * Retrieves active Discord Clients for the 5 developer bots allocated to Free Tier.
+   */
+  public static getFreeTierDeveloperClients(): Client[] {
+    return this.getWorkerClients().slice(0, 5);
   }
 
   /**

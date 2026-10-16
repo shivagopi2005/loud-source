@@ -27,41 +27,63 @@ export async function GET(
 
     const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
 
-    const bots = await prisma.botApplication.findMany({
-      where: {
-        workspace_id: workspaceId,
-        operational_role: { not: 'oauth_redirect' },
-        application_id: { notIn: [redirectClientId, '1560261747137454161'] },
-      },
-      include: {
-        credentials: {
-          select: {
-            id: true,
-            credential_version: true,
-            status: true,
-            created_at: true,
-            rotated_at: true,
-          },
-          orderBy: { credential_version: 'desc' },
-          take: 1,
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      include: { owner: true },
+    });
+
+    const { PremiumService } = await import('@/server/services/premium.service');
+    const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
+    const userTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
+    const isFreeTier = !userTier.isDeveloper && (userTier.tier === 'trial' || userTier.tier === 'free');
+
+    let bots: any[] = [];
+    let isAllocatedDeveloperFleet = false;
+
+    if (isFreeTier) {
+      // Free Tier accounts are pre-allocated 5 Developer Fleet Bots
+      bots = await FleetGatewayService.getFreeTierDeveloperBots();
+      isAllocatedDeveloperFleet = true;
+    } else {
+      bots = await prisma.botApplication.findMany({
+        where: {
+          workspace_id: workspaceId,
+          operational_role: { not: 'oauth_redirect' },
+          application_id: { notIn: [redirectClientId, '1560261747137454161'] },
         },
-        guild_accesses: {
-          include: {
-            guild: {
-              select: { id: true, guild_id: true, display_name: true, verification_status: true },
+        include: {
+          credentials: {
+            select: {
+              id: true,
+              credential_version: true,
+              status: true,
+              created_at: true,
+              rotated_at: true,
+            },
+            orderBy: { credential_version: 'desc' },
+            take: 1,
+          },
+          guild_accesses: {
+            include: {
+              guild: {
+                select: { id: true, guild_id: true, display_name: true, verification_status: true },
+              },
+            },
+          },
+          group_memberships: {
+            include: {
+              group: true,
             },
           },
         },
-        group_memberships: {
-          include: {
-            group: true,
-          },
-        },
-      },
-      orderBy: { created_at: 'desc' },
-    });
+        orderBy: { created_at: 'desc' },
+      });
 
-    const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
+      if (bots.length === 0) {
+        bots = await FleetGatewayService.getFreeTierDeveloperBots();
+        isAllocatedDeveloperFleet = true;
+      }
+    }
 
     const workerBots = bots.filter(
       (b) =>
@@ -74,7 +96,7 @@ export async function GET(
     return okResponse(
       workerBots.map((b) => {
         const isOnline = FleetGatewayService.isBotOnline(b.id);
-        const hasToken = b.credentials.length > 0;
+        const hasToken = (b.credentials && b.credentials.length > 0) || isAllocatedDeveloperFleet;
         const liveGuildIds = FleetGatewayService.getBotGuildIds(b.id);
         return {
           id: b.id,
@@ -86,8 +108,11 @@ export async function GET(
           hasToken,
           liveGuildIds,
           lastHealthCheckAt: b.last_health_check_at,
-          tags: b.tags,
-          operationalRole: b.operational_role,
+          tags: isAllocatedDeveloperFleet
+            ? ['developer_fleet', 'free_tier_allocated']
+            : b.tags,
+          operationalRole: isAllocatedDeveloperFleet ? 'developer_fleet_worker' : b.operational_role,
+          isDeveloperAllocated: isAllocatedDeveloperFleet,
           avatarUrl: b.avatar_url,
           bannerUrl: b.banner_url,
           bio: b.bio,
@@ -95,26 +120,26 @@ export async function GET(
           activityType: b.activity_type,
           accentColor: b.accent_color,
           createdAt: b.created_at,
-        credential: b.credentials[0]
-          ? {
-              id: b.credentials[0].id,
-              version: b.credentials[0].credential_version,
-              status: b.credentials[0].status,
-              maskedToken: '••••••••••••••••••••••••••••',
-            }
-          : null,
-        guilds: b.guild_accesses.map((ga) => ({
-          guildId: ga.guild.guild_id,
-          name: ga.guild.display_name,
-          status: ga.status,
-        })),
-        groups: b.group_memberships.map((gm) => ({
-          id: gm.group.id,
-          name: gm.group.name,
-        })),
-      };
-    })
-  );
+          credential: b.credentials && b.credentials[0]
+            ? {
+                id: b.credentials[0].id,
+                version: b.credentials[0].credential_version,
+                status: b.credentials[0].status,
+                maskedToken: '••••••••••••••••••••••••••••',
+              }
+            : null,
+          guilds: (b.guild_accesses || []).map((ga: any) => ({
+            guildId: ga.guild?.guild_id || ga.guild_id,
+            name: ga.guild?.display_name || ga.guild_id,
+            status: ga.status,
+          })),
+          groups: (b.group_memberships || []).map((gm: any) => ({
+            id: gm.group?.id || gm.group_id,
+            name: gm.group?.name || 'Default',
+          })),
+        };
+      })
+    );
   } catch (err) {
     return handleApiError(err);
   }
@@ -127,6 +152,22 @@ export async function POST(
   try {
     const { workspaceId } = await params;
     const { user } = await authorizeWorkspaceMember(request, workspaceId, 'bot:register');
+
+    // Free Tier restriction: Free tier accounts cannot add bots!
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      include: { owner: true },
+    });
+    const { PremiumService } = await import('@/server/services/premium.service');
+    const userTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
+    if (!userTier.isDeveloper && (userTier.tier === 'trial' || userTier.tier === 'free')) {
+      return errorResponse(
+        'FREE_TIER_BOT_RESTRICTION',
+        'Users on the Free Community Trial cannot register custom bot tokens. You have been allocated 5 Developer Fleet Bots to use for free. Upgrade to Pro or Enterprise to connect custom bots.',
+        403
+      );
+    }
+
     const body = await request.json();
     const data = RegisterBotSchema.parse(body);
 

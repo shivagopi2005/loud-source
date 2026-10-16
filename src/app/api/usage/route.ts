@@ -135,7 +135,12 @@ export async function GET(request: NextRequest) {
         maxDispatchOperations,
       },
       currentUsage: {
-        registeredBots: workspace._count.bots,
+        registeredBots:
+          workspace._count.bots > 0
+            ? workspace._count.bots
+            : effectiveTier === 'trial' || effectiveTier === 'free'
+            ? 5
+            : 0,
         activeVoiceEndpoints: activeVoiceSessions,
         totalVoiceSessions: workspace._count.voice_sessions,
         totalMessageJobs: workspace._count.message_jobs,

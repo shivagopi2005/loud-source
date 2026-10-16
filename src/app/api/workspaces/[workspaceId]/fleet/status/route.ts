@@ -12,7 +12,7 @@ export async function GET(
     const { workspaceId } = await params;
     await authorizeWorkspaceMember(request, workspaceId);
 
-    const bots = await prisma.botApplication.findMany({
+    let bots = await prisma.botApplication.findMany({
       where: {
         workspace_id: workspaceId,
         status: { notIn: ['removed', 'disabled'] },
@@ -24,6 +24,16 @@ export async function GET(
         status: true,
       },
     });
+
+    if (bots.length === 0) {
+      const devBots = await FleetGatewayService.getFreeTierDeveloperBots();
+      bots = devBots.map((b) => ({
+        id: b.id,
+        display_name: b.display_name,
+        application_id: b.application_id,
+        status: b.status,
+      }));
+    }
 
     const botIds = bots.map((b) => b.id);
     const liveStatuses = FleetGatewayService.getBotStatuses(botIds);

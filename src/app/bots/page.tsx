@@ -22,6 +22,7 @@ import {
   PowerOff,
   Wifi,
   WifiOff,
+  Sparkles,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 import { getCachedData, setCachedData } from '@/lib/client-cache';
@@ -341,6 +342,8 @@ function BotFleetContent() {
     return matchesSearch && matchesStatus;
   });
 
+  const isDeveloperAllocatedFleet = bots.some((b) => b.isDeveloperAllocated);
+
   return (
     <div className="space-y-6">
       {/* HEADER */}
@@ -378,6 +381,35 @@ function BotFleetContent() {
           </button>
         </div>
       </div>
+
+      {/* FREE TIER FLEET ALLOCATION BANNER */}
+      {isDeveloperAllocatedFleet && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/10 via-primary/10 to-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400 mt-0.5">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-foreground">Free Community Trial Fleet Active</h3>
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  5 Bots Allocated
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 max-w-2xl">
+                As a Free Community Trial member, you cannot add custom bots. Instead, you have been allocated <strong>5 Developer Fleet Bots</strong> to test voice streaming and commands. Upgrade to Community, Pro, or Enterprise to connect custom bots.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => router.push('/usage')}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shrink-0 shadow transition"
+          >
+            <span>Upgrade Plan</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* FLEET GATEWAY STATUS & BRING ONLINE BAR */}
       <div className="p-3.5 rounded-lg bg-card border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
@@ -501,7 +533,14 @@ function BotFleetContent() {
                         />
                       </div>
                       <div>
-                        <h3 className="text-sm font-bold text-foreground">{bot.displayName}</h3>
+                        <div className="flex items-center gap-1.5">
+                          <h3 className="text-sm font-bold text-foreground">{bot.displayName}</h3>
+                          {bot.isDeveloperAllocated && (
+                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                              Developer Fleet
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[11px] text-muted-foreground font-mono">
                           ID: {bot.applicationId}
                         </div>
@@ -603,12 +642,19 @@ function BotFleetContent() {
                       <span>Ping</span>
                     </button>
 
-                    <button
-                      onClick={() => router.push(`/bots/${bot.id}`)}
-                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground border border-border transition"
-                    >
-                      Configure
-                    </button>
+                    {bot.isDeveloperAllocated ? (
+                      <span className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
+                        <Bot className="w-3.5 h-3.5" />
+                        <span>Allocated Worker</span>
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => router.push(`/bots/${bot.id}`)}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground border border-border transition"
+                      >
+                        Configure
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -675,6 +721,25 @@ function BotFleetContent() {
                 </button>
               </div>
             </div>
+
+            {isDeveloperAllocatedFleet && (
+              <div className="mb-4 p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex flex-col gap-2">
+                <div className="flex items-center gap-2 font-semibold text-amber-400">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>Free Community Trial Restriction</span>
+                </div>
+                <p className="text-muted-foreground text-[11px]">
+                  Custom bot registration is disabled for Free Tier accounts. You have been allocated <strong>5 Developer Fleet Bots</strong> for testing. Upgrade your plan to connect custom bot tokens.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => router.push('/usage')}
+                  className="mt-1 self-start px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-black font-bold text-[11px] transition"
+                >
+                  View Plans & Upgrade
+                </button>
+              </div>
+            )}
 
             {formError && (
               <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-xs text-destructive flex items-center gap-2">
@@ -767,10 +832,14 @@ function BotFleetContent() {
                   </button>
                   <button
                     type="submit"
-                    disabled={isSubmitting || !formData.botToken}
+                    disabled={isSubmitting || !formData.botToken || isDeveloperAllocatedFleet}
                     className="px-5 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-md transition disabled:opacity-50"
                   >
-                    {isSubmitting ? 'Registering & Bringing Online...' : 'Save & Bring Online'}
+                    {isDeveloperAllocatedFleet
+                      ? 'Restricted on Free Tier'
+                      : isSubmitting
+                      ? 'Registering & Bringing Online...'
+                      : 'Save & Bring Online'}
                   </button>
                 </div>
               </form>
@@ -892,10 +961,14 @@ function BotFleetContent() {
                   </button>
                   <button
                     type="submit"
-                    disabled={isSubmitting || !bulkTokensInput.trim()}
+                    disabled={isSubmitting || !bulkTokensInput.trim() || isDeveloperAllocatedFleet}
                     className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition disabled:opacity-50"
                   >
-                    {isSubmitting ? 'Registering & Connecting Fleet...' : 'Save & Bring Fleet Online'}
+                    {isDeveloperAllocatedFleet
+                      ? 'Restricted on Free Tier'
+                      : isSubmitting
+                      ? 'Registering & Connecting Fleet...'
+                      : 'Save & Bring Fleet Online'}
                   </button>
                 </div>
               </form>

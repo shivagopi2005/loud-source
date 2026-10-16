@@ -22,6 +22,22 @@ export async function POST(
   try {
     const { workspaceId } = await params;
     const { user } = await authorizeWorkspaceMember(request, workspaceId, 'bot:register');
+
+    // Free Tier restriction: Free tier accounts cannot add bots!
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      include: { owner: true },
+    });
+    const { PremiumService } = await import('@/server/services/premium.service');
+    const userTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
+    if (!userTier.isDeveloper && (userTier.tier === 'trial' || userTier.tier === 'free')) {
+      return errorResponse(
+        'FREE_TIER_BOT_RESTRICTION',
+        'Users on the Free Community Trial cannot register custom bot tokens. You have been allocated 5 Developer Fleet Bots to use for free. Upgrade to Pro or Enterprise to connect custom bots.',
+        403
+      );
+    }
+
     const body = await request.json();
     const data = BulkRegisterSchema.parse(body);
 

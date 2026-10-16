@@ -13,6 +13,7 @@ import {
 } from '@discordjs/voice';
 import { prisma } from '../db/prisma';
 import { FleetGatewayService } from './fleet-gateway.service';
+import { PremiumService } from './premium.service';
 import { createCustomVoiceAdapter, tuneResourceEncoder } from '../voice/voice-worker';
 
 export interface ResolvedTrack {
@@ -281,24 +282,25 @@ export class FleetMusicService {
     }
     state.player.stop(true);
 
-    let allBots = await prisma.botApplication.findMany({
-      where: {
-        ...(workspaceId ? { workspace_id: workspaceId } : {}),
-        status: { notIn: ['removed', 'disabled'] },
-        operational_role: { not: 'oauth_redirect' },
-        application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
-      },
-    });
+    let allBots: any[] = [];
+    const userTier = await PremiumService.getUserTier(requestedById);
+    const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && requestedById !== '788970167907778562';
 
-    if (allBots.length === 0) {
+    if (isFreeTier) {
+      allBots = await FleetGatewayService.getFreeTierDeveloperBots();
+    } else {
       allBots = await prisma.botApplication.findMany({
         where: {
+          ...(workspaceId ? { workspace_id: workspaceId } : {}),
           status: { notIn: ['removed', 'disabled'] },
           operational_role: { not: 'oauth_redirect' },
           application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
         },
-        take: maxBots && maxBots > 0 ? maxBots : 5,
       });
+
+      if (allBots.length === 0) {
+        allBots = await FleetGatewayService.getFreeTierDeveloperBots();
+      }
     }
 
     const botsToConnect = maxBots && maxBots > 0 ? allBots.slice(0, maxBots) : allBots;

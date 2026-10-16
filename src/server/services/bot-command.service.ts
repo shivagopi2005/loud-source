@@ -397,6 +397,15 @@ export class BotCommandService {
             ['owner', 'administrator', 'operator', 'platform_admin'].includes(m.role)
         );
         if (isWorkspaceAdmin) return true;
+
+        // Free tier website users can command developer fleet bots (allocated 5 bots)
+        if (
+          bot.workspace.owner?.discord_id === DEVELOPER_ID ||
+          bot.workspace.owner_user_id === DEVELOPER_ID
+        ) {
+          const isWebUser = await this.isWebsiteUser(discordUserId);
+          if (isWebUser) return true;
+        }
       }
 
       // 2. Optional environment variable override
@@ -767,18 +776,24 @@ export class BotCommandService {
           effectiveCount = maxCount;
         }
 
-        // Gather worker clients in THIS workspace (or developer fleet bots if trial user has none)
+        // Gather worker clients: free tier users strictly use the 5 allocated developer bots
         let clientsToUse: Client[] = [];
-        const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
-          botRecord.workspace_id
-        );
-        if (workspaceWorkerClients.length > 0) {
-          clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+        const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && message.author.id !== DEVELOPER_ID;
+
+        if (isFreeTier) {
+          clientsToUse = FleetGatewayService.getFreeTierDeveloperClients().slice(0, Math.min(5, maxBots));
         } else {
-          const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
-            (c) => !FleetGatewayService.isRedirectBot(c)
+          const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
+            botRecord.workspace_id
           );
-          clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
+          if (workspaceWorkerClients.length > 0) {
+            clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+          } else {
+            const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
+              (c) => !FleetGatewayService.isRedirectBot(c)
+            );
+            clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
+          }
         }
 
         if (clientsToUse.length === 0) {
@@ -864,18 +879,24 @@ export class BotCommandService {
           return;
         }
 
-        // Gather worker clients in THIS workspace (or developer fleet bots if trial user has none)
+        // Gather worker clients: free tier users strictly use the 5 allocated developer bots
         let clientsToUse: Client[] = [];
-        const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
-          botRecord.workspace_id
-        );
-        if (workspaceWorkerClients.length > 0) {
-          clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+        const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && message.author.id !== DEVELOPER_ID;
+
+        if (isFreeTier) {
+          clientsToUse = FleetGatewayService.getFreeTierDeveloperClients().slice(0, Math.min(5, maxBots));
         } else {
-          const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
-            (c) => !FleetGatewayService.isRedirectBot(c)
+          const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
+            botRecord.workspace_id
           );
-          clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
+          if (workspaceWorkerClients.length > 0) {
+            clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+          } else {
+            const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
+              (c) => !FleetGatewayService.isRedirectBot(c)
+            );
+            clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
+          }
         }
 
         if (clientsToUse.length === 0) {
@@ -953,31 +974,39 @@ export class BotCommandService {
         });
 
         const userTier = await PremiumService.getUserTier(message.author.id);
-        const workspaceBots = await prisma.botApplication.findMany({
-          where: {
-            workspace_id: botRecord?.workspace_id,
-            status: { notIn: ['removed', 'disabled'] },
-            operational_role: { not: 'oauth_redirect' },
-            application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
-          },
-        });
-        let workerBots = workspaceBots.filter(
-          (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
-        );
-        if (workerBots.length === 0) {
-          const allWorkerBots = await prisma.botApplication.findMany({
+        const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && message.author.id !== DEVELOPER_ID;
+
+        let botsToJoin: any[] = [];
+        if (isFreeTier) {
+          const devBots = await FleetGatewayService.getFreeTierDeveloperBots();
+          botsToJoin = devBots.slice(0, Math.min(5, userTier.maxBots));
+        } else {
+          const workspaceBots = await prisma.botApplication.findMany({
             where: {
+              workspace_id: botRecord?.workspace_id,
               status: { notIn: ['removed', 'disabled'] },
               operational_role: { not: 'oauth_redirect' },
               application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
             },
-            take: Math.min(5, userTier.maxBots),
           });
-          workerBots = allWorkerBots.filter(
+          let workerBots = workspaceBots.filter(
             (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
           );
+          if (workerBots.length === 0) {
+            const allWorkerBots = await prisma.botApplication.findMany({
+              where: {
+                status: { notIn: ['removed', 'disabled'] },
+                operational_role: { not: 'oauth_redirect' },
+                application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
+              },
+              take: Math.min(5, userTier.maxBots),
+            });
+            workerBots = allWorkerBots.filter(
+              (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
+            );
+          }
+          botsToJoin = userTier.maxBots ? workerBots.slice(0, userTier.maxBots) : workerBots;
         }
-        const botsToJoin = userTier.maxBots ? workerBots.slice(0, userTier.maxBots) : workerBots;
 
         // Connect workspace bots smoothly with 35ms micro-stagger to avoid gateway congestion
         for (let i = 0; i < botsToJoin.length; i++) {
@@ -1014,15 +1043,23 @@ export class BotCommandService {
           select: { workspace_id: true },
         });
 
-        const workspaceBots = await prisma.botApplication.findMany({
-          where: {
-            workspace_id: botRecord?.workspace_id,
-            operational_role: { not: 'oauth_redirect' },
-          },
-        });
+        const userTier = await PremiumService.getUserTier(message.author.id);
+        const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && message.author.id !== DEVELOPER_ID;
+
+        let botsToLeave: any[] = [];
+        if (isFreeTier) {
+          botsToLeave = await FleetGatewayService.getFreeTierDeveloperBots();
+        } else {
+          botsToLeave = await prisma.botApplication.findMany({
+            where: {
+              workspace_id: botRecord?.workspace_id,
+              operational_role: { not: 'oauth_redirect' },
+            },
+          });
+        }
 
         await Promise.allSettled(
-          workspaceBots.map(async (b) => {
+          botsToLeave.map(async (b) => {
             const bClient = FleetGatewayService.getClient(b.id);
             if (bClient) {
               if (message.guild) {
@@ -1063,14 +1100,23 @@ export class BotCommandService {
         for (const g of client.guilds.cache.values()) {
           FleetMusicService.getInstance().stop(g.id);
         }
-        const workspaceBots = await prisma.botApplication.findMany({
-          where: {
-            workspace_id: botRecord?.workspace_id,
-            operational_role: { not: 'oauth_redirect' },
-          },
-        });
 
-        for (const b of workspaceBots) {
+        const userTier = await PremiumService.getUserTier(message.author.id);
+        const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && message.author.id !== DEVELOPER_ID;
+
+        let botsToStop: any[] = [];
+        if (isFreeTier) {
+          botsToStop = await FleetGatewayService.getFreeTierDeveloperBots();
+        } else {
+          botsToStop = await prisma.botApplication.findMany({
+            where: {
+              workspace_id: botRecord?.workspace_id,
+              operational_role: { not: 'oauth_redirect' },
+            },
+          });
+        }
+
+        for (const b of botsToStop) {
           const bClient = FleetGatewayService.getClient(b.id);
           if (bClient) {
             if (message.guild) {
