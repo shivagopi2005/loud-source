@@ -181,5 +181,98 @@ describe('DiscordBotService (PRD Section 6.2, 7.1, 7.5, 9.1)', () => {
     await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', unauthorizedMsg);
     expect(nonDevReply).toBe(''); // Rejects silently without response
   });
+
+  it('auto-deletes command messages and silences operational command responses while allowing !help', async () => {
+    const { BotCommandService } = await import('../../src/server/services/bot-command.service');
+
+    let deleted = false;
+    let replyText = '';
+    const mockWorkerClient = {
+      user: { id: '987654321012345678' },
+      mentions: { has: () => false },
+      users: { cache: new Map(), fetch: async () => null },
+      guilds: { cache: new Map() },
+      ws: { ping: 25 },
+    } as any;
+
+    // Test 1: Operational command (!play) by Developer (authorized)
+    // Must delete command invocation message and NOT reply in channel
+    const playMsg = {
+      id: 'test_msg_play_silent_' + Date.now(),
+      content: '!play loud band',
+      author: { bot: false, id: '788970167907778562' }, // Developer
+      mentions: { has: () => false },
+      delete: async () => {
+        deleted = true;
+      },
+      reply: async (text: string) => {
+        replyText = text;
+      },
+      channel: {
+        send: async (text: string) => {
+          replyText = text;
+        },
+      },
+    } as any;
+
+    deleted = false;
+    replyText = '';
+    await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', playMsg);
+    expect(deleted).toBe(true); // Command message was automatically deleted
+    expect(replyText).toBe(''); // Zero bot response in channel!
+
+    // Test 2: Help command (!help) by Developer (authorized)
+    // Must delete command invocation message AND show help response in channel
+    const helpMsg = {
+      id: 'test_msg_help_show_' + Date.now(),
+      content: '!help',
+      author: { bot: false, id: '788970167907778562' }, // Developer
+      mentions: { has: () => false },
+      delete: async () => {
+        deleted = true;
+      },
+      reply: async (text: string) => {
+        replyText = text;
+      },
+      channel: {
+        send: async (text: string) => {
+          replyText = text;
+        },
+      },
+    } as any;
+
+    deleted = false;
+    replyText = '';
+    await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', helpMsg);
+    expect(deleted).toBe(true); // Command message was automatically deleted
+    expect(replyText).toContain('Studio Fleet Commands'); // Help response is shown!
+
+    // Test 3: Help command (!help) by unauthorized stranger (not developer, not workspace owner/admin, not on site)
+    // Must NOT delete message and must NOT reply
+    const unauthorizedHelpMsg = {
+      id: 'test_msg_help_unauth_' + Date.now(),
+      content: '!help',
+      author: { bot: false, id: '111111111111111111' }, // Stranger
+      mentions: { has: () => false },
+      delete: async () => {
+        deleted = true;
+      },
+      reply: async (text: string) => {
+        replyText = text;
+      },
+      channel: {
+        send: async (text: string) => {
+          replyText = text;
+        },
+      },
+    } as any;
+
+    deleted = false;
+    replyText = '';
+    await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', unauthorizedHelpMsg);
+    expect(deleted).toBe(false); // Did not touch message
+    expect(replyText).toBe(''); // No response shown!
+  });
 });
+
 
