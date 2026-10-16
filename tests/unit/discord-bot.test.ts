@@ -117,5 +117,69 @@ describe('DiscordBotService (PRD Section 6.2, 7.1, 7.5, 9.1)', () => {
     expect(replyMessage).not.toContain('!dm');
     expect(replyMessage).not.toContain('!join');
   });
+
+  it('parseDmArguments correctly handles .count, .<number>, and .count <number>', async () => {
+    const { BotCommandService } = await import('../../src/server/services/bot-command.service');
+
+    // Case 1: Standard .5
+    const res1 = BotCommandService.parseDmArguments('<@123456789> wake up .5');
+    expect(res1.targetId).toBe('123456789');
+    expect(res1.messageText).toBe('wake up');
+    expect(res1.count).toBe(5);
+
+    // Case 2: .count 10
+    const res2 = BotCommandService.parseDmArguments('123456789 hello world .count 10');
+    expect(res2.targetId).toBe('123456789');
+    expect(res2.messageText).toBe('hello world');
+    expect(res2.count).toBe(10);
+
+    // Case 3: .count default (count = 1)
+    const res3 = BotCommandService.parseDmArguments('<@123456789> hello world .count');
+    expect(res3.targetId).toBe('123456789');
+    expect(res3.messageText).toBe('hello world');
+    expect(res3.count).toBe(1);
+
+    // Case 4: Curly braces { ... } with .25
+    const res4 = BotCommandService.parseDmArguments('<@123456789> {important system alert} .25');
+    expect(res4.targetId).toBe('123456789');
+    expect(res4.messageText).toBe('important system alert');
+    expect(res4.count).toBe(25);
+
+    // Case 5: Developer limit up to .999
+    const res5 = BotCommandService.parseDmArguments('<@123456789> erripuka yavadra nuvvu .999');
+    expect(res5.targetId).toBe('123456789');
+    expect(res5.messageText).toBe('erripuka yavadra nuvvu');
+    expect(res5.count).toBe(999);
+  });
+
+  it('!dmallbot is strictly invisible in public commands and rejects non-developers', async () => {
+    const { BotCommandService, PREFIX_COMMANDS } = await import('../../src/server/services/bot-command.service');
+
+    // 1. Must NOT be in PREFIX_COMMANDS
+    const hasDmallbotInRegistry = PREFIX_COMMANDS.some((c) => c.name.includes('dmallbot'));
+    expect(hasDmallbotInRegistry).toBe(false);
+
+    // 2. Must reject non-developers silently
+    let nonDevReply = '';
+    const mockWorkerClient = {
+      user: { id: '987654321012345678' },
+      mentions: { has: () => false },
+      users: { cache: new Map(), fetch: async () => null },
+    } as any;
+
+    const unauthorizedMsg = {
+      id: 'test_msg_unauth_' + Date.now(),
+      content: '!dmallbot <@111222333444> test blast .5',
+      author: { bot: false, id: '999888777666555444' }, // Not developer
+      mentions: { has: () => false },
+      reply: async (text: string) => {
+        nonDevReply = text;
+      },
+      react: async () => {},
+    } as any;
+
+    await BotCommandService.handleMessage(mockWorkerClient, 'mock-bot-id', unauthorizedMsg);
+    expect(nonDevReply).toBe(''); // Rejects silently without response
+  });
 });
 

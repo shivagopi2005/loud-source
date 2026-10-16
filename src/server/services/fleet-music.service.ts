@@ -260,12 +260,13 @@ export class FleetMusicService {
     requestedById: string;
     targetGuild: any;
     maxBots?: number;
+    workspaceId?: string;
   }): Promise<{
     track: ResolvedTrack;
     connectedBotCount: number;
     totalBotsInGuild: number;
   }> {
-    const { guildId, voiceChannelId, query, requestedById, targetGuild, maxBots } = params;
+    const { guildId, voiceChannelId, query, requestedById, targetGuild, maxBots, workspaceId } = params;
     const state = this.getOrCreateState(guildId);
 
     // 1. Resolve audio track
@@ -283,6 +284,7 @@ export class FleetMusicService {
     // 3. Connect fleet bots in this guild simultaneously up to maxBots limit
     const allBots = await prisma.botApplication.findMany({
       where: {
+        ...(workspaceId ? { workspace_id: workspaceId } : {}),
         status: { notIn: ['removed', 'disabled'] },
         operational_role: { not: 'oauth_redirect' },
         application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },

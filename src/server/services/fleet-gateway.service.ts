@@ -132,6 +132,31 @@ export class FleetGatewayService {
   }
 
   /**
+   * Retrieve active Discord Clients strictly belonging to a specific workspace EXCEPT the protected Redirect/OAuth bot.
+   */
+  public static async getWorkspaceWorkerClients(workspaceId: string): Promise<Client[]> {
+    if (!workspaceId) return [];
+    const workspaceBots = await prisma.botApplication.findMany({
+      where: {
+        workspace_id: workspaceId,
+        operational_role: { not: 'oauth_redirect' },
+        application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
+      },
+      select: { id: true, application_id: true },
+    });
+
+    const clients: Client[] = [];
+    for (const b of workspaceBots) {
+      if (this.isRedirectBot(b.id) || this.isRedirectBot(b.application_id)) continue;
+      const client = this.getClient(b.id);
+      if (client && !this.isRedirectBot(client)) {
+        clients.push(client);
+      }
+    }
+    return clients;
+  }
+
+  /**
    * Retrieve all active Discord Clients across the fleet.
    */
   public static getAllClients(): Client[] {

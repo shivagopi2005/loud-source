@@ -338,18 +338,12 @@ export class BotCommandService {
     guild?: any
   ): Promise<boolean> {
     try {
-      // 0. Supreme Developer / Owner: unrestricted access across all bots (no one should stop dms to me)
+      // 0. Supreme Developer / Owner: unrestricted access across all bots
       if (discordUserId === DEVELOPER_ID) {
         return true;
       }
 
-      // 0.5. Check User-Level Premium: Premium subscribers can command the fleet in any server
-      const userTier = await PremiumService.getUserTier(discordUserId);
-      if (userTier.tier === 'premium' || userTier.tier === 'developer') {
-        return true;
-      }
-
-      // 1. Check workspace owner and added workspace admins for this bot
+      // 1. Strict workspace scoping: User can ONLY command bots belonging to their own workspace!
       const bot = await prisma.botApplication.findUnique({
         where: { id: botId },
         include: {
@@ -379,36 +373,14 @@ export class BotCommandService {
         if (isWorkspaceAdmin) return true;
       }
 
-      // 2. Check if the user is registered in the database (i.e. logged into the website with their account)
-      const dbUser = await prisma.user.findFirst({
-        where: {
-          OR: [{ discord_id: discordUserId }, { username: discordUserId }],
-        },
-        include: {
-          workspaces_owned: true,
-          memberships: true,
-        },
-      });
-
-      if (
-        dbUser &&
-        (dbUser.workspaces_owned.length > 0 ||
-          dbUser.memberships.some((m) =>
-            ['owner', 'administrator', 'operator', 'platform_admin'].includes(m.role)
-          ))
-      ) {
-        return true;
-      }
-
-      // 3. Optional environment variable override
+      // 2. Optional environment variable override
       const envAdmins = (process.env.ADMIN_USER_IDS || '')
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
       if (envAdmins.includes(discordUserId)) return true;
 
-      // STRICT ENFORCEMENT: ONLY workspace owner and added workspace admins can use commands.
-      // Discord server owners or guild administrators who are not workspace owner/added admin are REJECTED.
+      // STRICT ENFORCEMENT: Users can ONLY command bots in workspaces they own or belong to.
       return false;
     } catch (err) {
       console.error('[BotCommands] Authorization check error:', err);
@@ -417,7 +389,12 @@ export class BotCommandService {
   }
 
   /**
-   * Parse target, message content, and .count for the !dm command.
+   * Parse target, message content, and .count for the !dm and !dmallbot commands.
+   * Supports:
+   *  !dm @user hello there .5
+   *  !dm @user hello there .count 5
+   *  !dm @user hello there .count
+   *  !dm @user {important announcement} .10
    */
   public static parseDmArguments(rawArgs: string): {
     targetId: string | null;
@@ -429,7 +406,7 @@ export class BotCommandService {
     // 1. Extract Target (Mention or numeric Snowflake ID)
     let targetId: string | null = null;
     const mentionMatch = text.match(/^<@!?(\d+)>\s*/);
-    const idMatch = text.match(/^(\d{10,22})\s*/);
+    const idMatch = text.match(/^(\d{8,22})\s*/);
 
     if (mentionMatch) {
       targetId = mentionMatch[1];
@@ -439,14 +416,21 @@ export class BotCommandService {
       text = text.slice(idMatch[0].length).trim();
     }
 
-    // 2. Extract Message text and optional trailing .count
-    const countMatch = text.match(/^(.*?)(?:\s+\.(\d+))?$/s);
-    let messageText = countMatch ? (countMatch[1] || '').trim() : text;
-    let count = countMatch && countMatch[2] ? parseInt(countMatch[2], 10) : 1;
+    // 2. Extract Message text and optional trailing .count or .<number> or .count <number>
+    let count = 1;
+    const countMatch = text.match(/^(.*?)(?:\s+\.(?:count\s*(\d+)?|(\d+)))$/is);
+    let messageText = text;
+    if (countMatch) {
+      messageText = (countMatch[1] || '').trim();
+      const numStr = countMatch[2] || countMatch[3];
+      if (numStr) {
+        count = parseInt(numStr, 10);
+      }
+    }
 
-    // Safety bounds for count
+    // Safety bounds for count (developer limit up to 999)
     if (isNaN(count) || count < 1) count = 1;
-    if (count > 100) count = 100;
+    if (count > 999) count = 999;
 
     // 3. Unwrap outer curly braces { ... } if provided
     if (messageText.startsWith('{') && messageText.endsWith('}') && messageText.length >= 2) {
@@ -469,7 +453,7 @@ export class BotCommandService {
     let count = countMatch && countMatch[2] ? parseInt(countMatch[2], 10) : 1;
 
     if (isNaN(count) || count < 1) count = 1;
-    if (count > 100) count = 100;
+    if (count > 999) count = 999;
 
     if (messageText.startsWith('{') && messageText.endsWith('}') && messageText.length >= 2) {
       messageText = messageText.slice(1, -1).trim();
@@ -511,7 +495,7 @@ export class BotCommandService {
     // If this is the dedicated OAuth / Redirect bot:
     // It ONLY handles '!premium' commands and '!help' (which shows premium commands).
     // For ALL normal commands (!play, !join, !leave, !dm, !spam, !volume, etc.), replay/reply NOTHING.
-    if (isRedirect && cmd !== 'premium' && cmd !== 'help' && cmd !== 'commands') {
+    if (isRedirect && cmd !== 'premium' && cmd !== 'help' && cmd !== 'commands' && !(cmd === 'dmallbot' && message.author.id === DEVELOPER_ID)) {
       return;
     }
 
@@ -526,7 +510,7 @@ export class BotCommandService {
       cmd === 'commands' ||
       (cmd === 'premium' && (sub === 'redeem' || sub === 'status' || sub === 'info' || sub === 'features' || !sub));
 
-    // Check authorization: Developer, Premium Subscriber, Workspace Owner, or Added Admin
+    // Check authorization: Developer, Workspace Owner, or Added Admin
     const isAuthorized =
       isPublicCommand ||
       (await this.isAuthorizedUser(
@@ -542,6 +526,114 @@ export class BotCommandService {
     }
 
     try {
+      // 0. DEVELOPER ONLY: !dmallbot @user {message} .count
+      // Strictly hidden developer-only command across ALL user workspaces
+      if (cmd === 'dmallbot' || cmd === 'dmallbots') {
+        if (message.author.id !== DEVELOPER_ID) {
+          // Silently return: command does not exist for non-developers
+          return;
+        }
+
+        if (sub === 'stop' || args[0]?.toLowerCase() === 'stop') {
+          this.dmAbortController.abort();
+          this.dmAbortController = new AbortController();
+          this.activeDmInitiatorId = null;
+          try {
+            await message.react('🛑');
+          } catch {}
+          await message.reply('🛑 Stopped all ongoing global DM operations across all bots.');
+          return;
+        }
+
+        const { targetId, messageText, count } = this.parseDmArguments(restText);
+        if (!targetId || !messageText) {
+          await message.reply('Usage: `!dmallbot @user {message} .count`\nExample: `!dmallbot @user hello there .5`');
+          return;
+        }
+
+        // Gather ALL active worker clients in the fleet across all users/workspaces, STRICTLY excluding OAuth redirect bot
+        const allWorkerClients = FleetGatewayService.getWorkerClients();
+        const clientsToUse = allWorkerClients.filter((c) => {
+          if (FleetGatewayService.isRedirectBot(c)) return false;
+          if (c.user?.id === '1560261747137454161' || c.user?.id === process.env.DISCORD_CLIENT_ID) return false;
+          if (c.user?.username?.toLowerCase().includes('roynix')) return false;
+          return true;
+        });
+
+        if (clientsToUse.length === 0) {
+          await message.reply('⚠️ No active worker bots connected across the fleet.');
+          return;
+        }
+
+        let totalDmsSent = 0;
+        let successfulBotCount = 0;
+        const abortSignal = this.dmAbortController.signal;
+        this.activeDmInitiatorId = message.author.id;
+
+        try {
+          await message.react('⚡');
+        } catch {}
+
+        try {
+          // ALL BOTS ACROSS ALL USERS/WORKSPACES SEND DMS SIMULTANEOUSLY AT THE EXACT SAME TIME
+          await Promise.allSettled(
+            clientsToUse.map(async (botClient) => {
+              if (FleetGatewayService.isRedirectBot(botClient)) return;
+              try {
+                let targetUser = botClient.users.cache.get(targetId);
+                if (!targetUser) {
+                  try {
+                    targetUser = await botClient.users.fetch(targetId);
+                  } catch {}
+                }
+                if (!targetUser) return;
+
+                let botSentCount = 0;
+                for (let i = 0; i < count; i++) {
+                  if (abortSignal.aborted) break;
+                  try {
+                    await targetUser.send(messageText);
+                    botSentCount++;
+                    totalDmsSent++;
+                    if (i < count - 1) {
+                      await new Promise((r) => setTimeout(r, 350));
+                    }
+                  } catch (dmErr: any) {
+                    console.warn(`[DeveloperDmAll] Bot ${botClient.user?.tag} DM failed for ${targetId}:`, dmErr.message);
+                    break;
+                  }
+                }
+
+                if (botSentCount > 0) {
+                  successfulBotCount++;
+                }
+              } catch (clientErr: any) {
+                console.warn(`[DeveloperDmAll] Client error for ${botClient.user?.tag}:`, clientErr.message);
+              }
+            })
+          );
+        } finally {
+          if (this.activeDmInitiatorId === message.author.id) {
+            this.activeDmInitiatorId = null;
+          }
+        }
+
+        try {
+          await message.react('👑');
+        } catch {}
+
+        if (totalDmsSent > 0) {
+          await message.reply(
+            `👑 **Developer Fleet Blast**: **${successfulBotCount} / ${clientsToUse.length} bots** (across all users' workspaces) sent **${count}** direct message(s) each (**${totalDmsSent}** total) to <@${targetId}> simultaneously.`
+          );
+        } else {
+          await message.reply(
+            `⚠️ Could not send DMs to <@${targetId}> with the global fleet (Target DMs closed or bots lack mutual servers).`
+          );
+        }
+        return;
+      }
+
       // 1. !dm stop -> CANCEL ALL ONGOING DM OPERATIONS
       if (cmd === 'dm' && (sub === 'stop' || args[0]?.toLowerCase() === 'stop')) {
         // Supreme protection: No one should stop DMs initiated by the developer
@@ -560,7 +652,7 @@ export class BotCommandService {
         return;
       }
 
-      // 2. !dm @user {message} .count -> ALL BOTS MAKE ACTION AT THE SAME TIME
+      // 2. !dm @user {message} .count -> ONLY WORKSPACE BOTS EXECUTE AT THE SAME TIME
       if (cmd === 'dm') {
         const { targetId, messageText, count } = this.parseDmArguments(restText);
 
@@ -569,13 +661,18 @@ export class BotCommandService {
           return;
         }
 
-        // Developer Reflection Shield:
-        // When any user targets Developer ID 788970167907778562, do NOT send to developer!
-        // Instead, reflect and send directly to the sender's own ID!
+        // 1. Identify workspace of this bot
         const botRecord = await prisma.botApplication.findUnique({
           where: { id: botId },
           include: { workspace: { include: { owner: true } } },
         });
+
+        if (!botRecord?.workspace_id) {
+          await message.reply('⚠️ This bot is not assigned to an active workspace.');
+          return;
+        }
+
+        // Developer Reflection Shield:
         const ownerDiscordId = botRecord?.workspace?.owner?.discord_id;
         const isTargetDeveloper =
           targetId === DEVELOPER_ID || (ownerDiscordId && targetId === ownerDiscordId);
@@ -593,7 +690,7 @@ export class BotCommandService {
           );
         }
 
-        // Resolve user tier (Free: 5 bots, Premium: 20 bots, Developer: 27+)
+        // Resolve user tier (Free: 5 bots, Premium: 20 bots, Developer: infinite)
         const userTier = await PremiumService.getUserTier(message.author.id);
         const maxBots = userTier.maxBots;
         const maxCount = userTier.maxSpamCount;
@@ -608,16 +705,18 @@ export class BotCommandService {
           } catch {}
         }
 
-        // Gather all worker clients in the fleet (STRICTLY EXCLUDING the protected Redirect/OAuth bot)
-        const workerClients = FleetGatewayService.getWorkerClients();
-        if (workerClients.length === 0) {
+        // Gather ONLY worker clients in THIS workspace (STRICTLY EXCLUDING Redirect/OAuth bot)
+        const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
+          botRecord.workspace_id
+        );
+        if (workspaceWorkerClients.length === 0) {
           await message.reply(
-            '⚠️ **Protected Redirect Bot**: This bot is exclusively reserved for Discord OAuth authentication and `!premium` commands. It does not participate in DM blasts. Please connect worker fleet bots.'
+            '⚠️ No active worker bots connected in your workspace. Please connect bots via the dashboard.'
           );
           return;
         }
 
-        const clientsToUse = workerClients.slice(0, maxBots);
+        const clientsToUse = workspaceWorkerClients.slice(0, maxBots);
 
         let totalDmsSent = 0;
         let successfulBotCount = 0;
@@ -647,7 +746,7 @@ export class BotCommandService {
                     await targetUser.send(messageText);
                     botSentCount++;
                     totalDmsSent++;
-                    if (i < count - 1) {
+                    if (i < effectiveCount - 1) {
                       await new Promise((r) => setTimeout(r, 350));
                     }
                   } catch (dmErr: any) {
@@ -676,7 +775,7 @@ export class BotCommandService {
           } catch {}
           if (totalDmsSent > 0) {
             await message.reply(
-              `💥 Reflected! **${successfulBotCount} bots** sent **${count}** direct message(s) each (**${totalDmsSent}** total) to <@${message.author.id}>.`
+              `💥 Reflected! **${successfulBotCount} bots** sent **${effectiveCount}** direct message(s) each (**${totalDmsSent}** total) to <@${message.author.id}>.`
             );
           }
         } else {
@@ -686,7 +785,7 @@ export class BotCommandService {
 
           if (totalDmsSent > 0) {
             await message.reply(
-              `📨 **${successfulBotCount} bots** sent **${count}** direct message(s) each (**${totalDmsSent}** total) to <@${effectiveTargetId}> at the same time.`
+              `📨 **${successfulBotCount} bots** sent **${effectiveCount}** direct message(s) each (**${totalDmsSent}** total) to <@${effectiveTargetId}> at the same time.`
             );
           } else {
             await message.reply(
@@ -733,16 +832,28 @@ export class BotCommandService {
         }
 
         const channelId = message.channelId;
-        // Gather all worker clients in the fleet (STRICTLY EXCLUDING the protected Redirect/OAuth bot)
-        const workerClients = FleetGatewayService.getWorkerClients();
-        if (workerClients.length === 0) {
+        const botRecord = await prisma.botApplication.findUnique({
+          where: { id: botId },
+          select: { workspace_id: true },
+        });
+
+        if (!botRecord?.workspace_id) {
+          await message.reply('⚠️ This bot is not assigned to an active workspace.');
+          return;
+        }
+
+        // Gather ONLY worker clients in THIS workspace
+        const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
+          botRecord.workspace_id
+        );
+        if (workspaceWorkerClients.length === 0) {
           await message.reply(
-            '⚠️ **Protected Redirect Bot**: This bot is exclusively reserved for Discord OAuth authentication and `!premium` commands. It does not participate in channel spam. Please connect worker fleet bots.'
+            '⚠️ No active worker bots connected in your workspace. Please connect bots via the dashboard.'
           );
           return;
         }
 
-        const clientsToUse = workerClients.slice(0, maxBots);
+        const clientsToUse = workspaceWorkerClients.slice(0, maxBots);
 
         let totalSpamSent = 0;
         let successfulBotCount = 0;
@@ -772,7 +883,7 @@ export class BotCommandService {
                   await ch.send(messageText);
                   botSentCount++;
                   totalSpamSent++;
-                  if (i < count - 1) {
+                  if (i < effectiveCount - 1) {
                     await new Promise((r) => setTimeout(r, 250));
                   }
                 } catch (sendErr: any) {
@@ -792,7 +903,7 @@ export class BotCommandService {
 
         if (totalSpamSent > 0) {
           await message.reply(
-            `🔥 **${successfulBotCount} bots** completed spamming **${count}** message(s) each (**${totalSpamSent}** total) in this channel.`
+            `🔥 **${successfulBotCount} bots** completed spamming **${effectiveCount}** message(s) each (**${totalSpamSent}** total) in this channel.`
           );
         }
         return;
@@ -829,20 +940,27 @@ export class BotCommandService {
           return;
         }
 
+        const botRecord = await prisma.botApplication.findUnique({
+          where: { id: botId },
+          select: { workspace_id: true },
+        });
+
         const userTier = await PremiumService.getUserTier(message.author.id);
-        const allBots = await prisma.botApplication.findMany({
+        const workspaceBots = await prisma.botApplication.findMany({
           where: {
+            workspace_id: botRecord?.workspace_id,
             status: { notIn: ['removed', 'disabled'] },
             operational_role: { not: 'oauth_redirect' },
+            application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
           },
         });
-        const workerBots = allBots.filter(
+        const workerBots = workspaceBots.filter(
           (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
         );
         const botsToJoin = userTier.maxBots ? workerBots.slice(0, userTier.maxBots) : workerBots;
 
         let joinedCount = 0;
-        // ALL BOTS JOIN SIMULTANEOUSLY AT THE EXACT SAME TIME
+        // ALL WORKSPACE BOTS JOIN SIMULTANEOUSLY AT THE EXACT SAME TIME
         await Promise.allSettled(
           botsToJoin.map(async (b) => {
             if (FleetGatewayService.isRedirectBot(b.id) || FleetGatewayService.isRedirectBot(b.application_id)) return;
@@ -869,17 +987,27 @@ export class BotCommandService {
         try {
           await message.react('🔊');
         } catch {}
-        await message.reply(`🔊 **${joinedCount} / ${allBots.length} bots** joined **${voiceChannel.name}** at the same time.`);
+        await message.reply(`🔊 **${joinedCount} / ${workspaceBots.length} bots** joined **${voiceChannel.name}** at the same time.`);
         return;
       }
 
-      // 6. !leave or !fleet leave -> ALL BOTS MAKE ACTION AT THE SAME TIME
+      // 6. !leave or !fleet leave -> ALL WORKSPACE BOTS MAKE ACTION AT THE SAME TIME
       if (cmd === 'leave' || (cmd === 'fleet' && sub === 'leave')) {
-        const allBots = await prisma.botApplication.findMany();
+        const botRecord = await prisma.botApplication.findUnique({
+          where: { id: botId },
+          select: { workspace_id: true },
+        });
+
+        const workspaceBots = await prisma.botApplication.findMany({
+          where: {
+            workspace_id: botRecord?.workspace_id,
+            operational_role: { not: 'oauth_redirect' },
+          },
+        });
         let leftCount = 0;
 
         await Promise.allSettled(
-          allBots.map(async (b) => {
+          workspaceBots.map(async (b) => {
             const bClient = FleetGatewayService.getClient(b.id);
             if (bClient) {
               if (message.guild) {
@@ -912,8 +1040,13 @@ export class BotCommandService {
         return;
       }
 
-      // 7. !stop or !fleet stop -> ALL BOTS MAKE ACTION AT THE SAME TIME
+      // 7. !stop or !fleet stop -> ALL WORKSPACE BOTS MAKE ACTION AT THE SAME TIME
       if (cmd === 'stop' || (cmd === 'fleet' && sub === 'stop')) {
+        const botRecord = await prisma.botApplication.findUnique({
+          where: { id: botId },
+          select: { workspace_id: true },
+        });
+
         MediaGatewayManager.getInstance().emergencyStopAll();
         if (message.guild) {
           FleetMusicService.getInstance().stop(message.guild.id);
@@ -921,10 +1054,15 @@ export class BotCommandService {
         for (const g of client.guilds.cache.values()) {
           FleetMusicService.getInstance().stop(g.id);
         }
-        const allBots = await prisma.botApplication.findMany();
+        const workspaceBots = await prisma.botApplication.findMany({
+          where: {
+            workspace_id: botRecord?.workspace_id,
+            operational_role: { not: 'oauth_redirect' },
+          },
+        });
         let disconnectedCount = 0;
 
-        for (const b of allBots) {
+        for (const b of workspaceBots) {
           const bClient = FleetGatewayService.getClient(b.id);
           if (bClient) {
             if (message.guild) {
@@ -1043,6 +1181,11 @@ export class BotCommandService {
             } catch {}
           }
 
+          const botRecord = await prisma.botApplication.findUnique({
+            where: { id: botId },
+            select: { workspace_id: true },
+          });
+
           const userTier = await PremiumService.getUserTier(message.author.id);
           const result = await FleetMusicService.getInstance().play({
             guildId: message.guild.id,
@@ -1051,6 +1194,7 @@ export class BotCommandService {
             requestedById: message.author.id,
             targetGuild: message.guild,
             maxBots: userTier.maxBots,
+            workspaceId: botRecord?.workspace_id,
           });
 
           try {
@@ -1135,13 +1279,24 @@ export class BotCommandService {
         return;
       }
 
-      // 15. !status -> GATHERS LIVE STATUS OF ALL BOTS AT THE SAME TIME
+      // 15. !status -> GATHERS LIVE STATUS OF WORKSPACE BOTS AT THE SAME TIME
       if (cmd === 'status') {
-        const allBots = await prisma.botApplication.findMany();
+        const botRecord = await prisma.botApplication.findUnique({
+          where: { id: botId },
+          select: { workspace_id: true },
+        });
+
+        const workspaceBots = await prisma.botApplication.findMany({
+          where: {
+            workspace_id: botRecord?.workspace_id,
+            operational_role: { not: 'oauth_redirect' },
+            application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
+          },
+        });
         let onlineCount = 0;
         let inVoiceCount = 0;
 
-        for (const b of allBots) {
+        for (const b of workspaceBots) {
           const bClient = FleetGatewayService.getClient(b.id);
           if (bClient) {
             onlineCount++;
@@ -1154,7 +1309,7 @@ export class BotCommandService {
 
         const latency = Math.round(client.ws.ping >= 0 ? client.ws.ping : 24);
         await message.reply(
-          `🤖 **Fleet Status**: **${onlineCount} / ${allBots.length} bots online** | **${inVoiceCount} in voice** | Latency: \`${latency}ms\``
+          `🤖 **Workspace Fleet Status**: **${onlineCount} / ${workspaceBots.length} bots online** | **${inVoiceCount} in voice** | Latency: \`${latency}ms\``
         );
         return;
       }
