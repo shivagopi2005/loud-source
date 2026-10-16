@@ -79,12 +79,19 @@ function BotFleetContent() {
     }
   }, [searchParams]);
 
+  const isExcludedBot = (b: any) =>
+    b.operationalRole === 'oauth_redirect' ||
+    b.applicationId === '1560261747137454161' ||
+    b.displayName === 'Roynix Loud' ||
+    b.tags?.includes('oauth') ||
+    b.tags?.includes('redirect');
+
   const loadBots = async () => {
     if (!currentWorkspace) return;
     const cacheKey = `workspace:${currentWorkspace.id}:bots`;
     const cached = getCachedData<any[]>(cacheKey);
     if (cached && cached.length > 0) {
-      setBots(cached);
+      setBots(cached.filter((b) => !isExcludedBot(b)));
       setIsLoading(false);
     }
     try {
@@ -92,8 +99,9 @@ function BotFleetContent() {
       if (res.ok) {
         const json = await res.json();
         if (json.data) {
-          setBots(json.data);
-          setCachedData(cacheKey, json.data, 15000);
+          const filtered = json.data.filter((b: any) => !isExcludedBot(b));
+          setBots(filtered);
+          setCachedData(cacheKey, filtered, 15000);
         }
       }
     } catch (err) {
@@ -317,9 +325,10 @@ function BotFleetContent() {
     }
   };
 
-  const onlineBotsCount = bots.filter((b) => b.online || b.status === 'connected').length;
+  const onlineBotsCount = bots.filter((b) => !isExcludedBot(b) && (b.online || b.status === 'connected')).length;
 
   const filteredBots = bots.filter((b) => {
+    if (isExcludedBot(b)) return false;
     const matchesSearch =
       b.displayName.toLowerCase().includes(search.toLowerCase()) ||
       b.applicationId.includes(search);

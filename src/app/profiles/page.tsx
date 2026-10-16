@@ -25,6 +25,13 @@ import {
   Check,
   X,
   HelpCircle,
+  Trash2,
+  Link2,
+  FileText,
+  Activity,
+  Circle,
+  Users,
+  Type,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 import { getCachedData, setCachedData } from '@/lib/client-cache';
@@ -97,8 +104,17 @@ export default function BotProfilesPage() {
   const [selectedTheme, setSelectedTheme] = useState('all');
   const [uniquePerBot, setUniquePerBot] = useState(true);
 
-  // Active Tab
+  // Active Tab & Filters
   const [editorTab, setEditorTab] = useState<'editor' | 'presets'>('editor');
+  const [isAvatarUrlInputOpen, setIsAvatarUrlInputOpen] = useState(false);
+  const [isBannerUrlInputOpen, setIsBannerUrlInputOpen] = useState(false);
+  const [showRateLimitNotice, setShowRateLimitNotice] = useState(true);
+  const [presetThemeFilter, setPresetThemeFilter] = useState('all');
+
+  const filteredPresets = useMemo(() => {
+    if (presetThemeFilter === 'all') return PROFILE_PRESETS;
+    return PROFILE_PRESETS.filter((p) => p.theme === presetThemeFilter);
+  }, [presetThemeFilter]);
 
   // Fetch all bots for workspace
   const fetchProfiles = async () => {
@@ -228,8 +244,14 @@ export default function BotProfilesPage() {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      if (target === 'avatar') setAvatarUrl(result);
-      if (target === 'banner') setBannerUrl(result);
+      if (target === 'avatar') {
+        setAvatarUrl(result);
+        setIsAvatarUrlInputOpen(false);
+      }
+      if (target === 'banner') {
+        setBannerUrl(result);
+        setIsBannerUrlInputOpen(false);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -350,13 +372,13 @@ export default function BotProfilesPage() {
   return (
     <div className="space-y-6">
       {/* PAGE HEADER */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-border">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-border/80">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <UserCircle className="w-5 h-5 text-primary" />
+          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
+            <UserCircle className="w-6 h-6 text-primary" />
             <span>Bot Profiles &amp; Banners</span>
           </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
+          <p className="text-xs text-muted-foreground mt-1">
             Manage bot avatars, profile banners, bios, and presence status across your Discord fleet.
           </p>
         </div>
@@ -366,7 +388,7 @@ export default function BotProfilesPage() {
           <button
             onClick={() => handleSaveProfiles(true)}
             disabled={isSaving || bots.length === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-foreground border border-border text-xs font-medium transition disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground border border-border text-xs font-semibold transition disabled:opacity-50 shadow-xs"
             title="Apply randomized profile presets across target bots"
           >
             <Shuffle className="w-3.5 h-3.5 text-muted-foreground" />
@@ -376,7 +398,7 @@ export default function BotProfilesPage() {
           <button
             onClick={() => handleSaveProfiles(false)}
             disabled={isSaving || bots.length === 0}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold transition disabled:opacity-50 shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold transition disabled:opacity-50 shadow-md"
           >
             {isSaving ? (
               <>
@@ -394,27 +416,40 @@ export default function BotProfilesPage() {
       </div>
 
       {/* DISCORD RATE LIMIT ADVISORY BOX */}
-      <div className="p-3.5 rounded-lg bg-card border border-border/80 flex items-start gap-3 text-xs text-muted-foreground">
-        <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-foreground">Why do some bots change and others wait?</span>
-            <span className="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 text-[10px] font-mono border border-amber-500/20">
-              Discord API Rule
-            </span>
+      {showRateLimitNotice && (
+        <div className="p-4 rounded-xl bg-card border border-border/80 shadow-sm flex items-start justify-between gap-3 text-xs text-muted-foreground transition">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
+              <Clock className="w-4 h-4" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-foreground text-xs">Discord Rate Limit Advisory</span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-mono border border-amber-500/20 font-medium">
+                  API Rule
+                </span>
+              </div>
+              <p className="leading-relaxed">
+                Discord strictly enforces a rate limit of <strong>2 avatar changes and 2 banner changes every 10 minutes per bot</strong>.
+                If you changed a bot twice recently, Discord temporarily locks that bot&apos;s avatar/banner until the 10-minute cooldown finishes.
+                <strong> Bios, Custom Status, and Nicknames have NO cooldown</strong> and update immediately on all bots.
+              </p>
+            </div>
           </div>
-          <p className="leading-relaxed">
-            Discord strictly enforces a rate limit of <strong>2 avatar changes and 2 banner changes every 10 minutes per bot</strong>.
-            If you changed a bot twice recently, Discord temporarily locks that bot&apos;s avatar/banner until the 10-minute cooldown finishes.
-            <strong> Bios, Custom Status, and Nicknames have NO cooldown</strong> and update immediately on all bots.
-          </p>
+          <button
+            onClick={() => setShowRateLimitNotice(false)}
+            className="text-muted-foreground hover:text-foreground p-1 rounded-md transition shrink-0"
+            title="Dismiss advisory"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-      </div>
+      )}
 
       {/* FEEDBACK STATUS ALERT */}
       {statusMessage && (
         <div
-          className={`p-3 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+          className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-2.5 shadow-sm transition ${
             statusMessage.type === 'success'
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
               : statusMessage.type === 'warning'
@@ -422,17 +457,17 @@ export default function BotProfilesPage() {
               : 'bg-destructive/10 border-destructive/30 text-destructive'
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
             {statusMessage.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
             ) : (
               <AlertTriangle className="w-4 h-4 shrink-0" />
             )}
-            <span>{statusMessage.text}</span>
+            <span className="font-medium leading-relaxed">{statusMessage.text}</span>
           </div>
           <button
             onClick={() => setStatusMessage(null)}
-            className="text-muted-foreground hover:text-foreground text-xs"
+            className="text-muted-foreground hover:text-foreground text-xs p-1 rounded-md transition shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -440,103 +475,145 @@ export default function BotProfilesPage() {
       )}
 
       {/* TARGET SCOPE & GRANULAR UPDATE TOGGLES */}
-      <div className="p-3 rounded-lg bg-card border border-border flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="font-semibold text-muted-foreground mr-1">Target Mode:</span>
+      <div className="p-3.5 rounded-xl bg-card border border-border/80 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs">
+        {/* Scope Selector */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-1">
+            Target Scope:
+          </span>
 
-          <button
-            onClick={() => setTargetScope('all')}
-            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
-              targetScope === 'all'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <span>All Bots ({bots.length})</span>
-          </button>
+          <div className="flex items-center bg-secondary/80 p-1 rounded-lg border border-border/60">
+            <button
+              onClick={() => setTargetScope('all')}
+              className={`px-3 py-1 rounded-md font-semibold text-xs transition flex items-center gap-1.5 ${
+                targetScope === 'all'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>All Bots ({bots.length})</span>
+            </button>
 
-          <button
-            onClick={() => setTargetScope('selected')}
-            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
-              targetScope === 'selected'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <span>Selected Bots ({selectedBotIds.size})</span>
-          </button>
+            <button
+              onClick={() => setTargetScope('selected')}
+              className={`px-3 py-1 rounded-md font-semibold text-xs transition flex items-center gap-1.5 ${
+                targetScope === 'selected'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>Selected ({selectedBotIds.size})</span>
+            </button>
 
-          <button
-            onClick={() => setTargetScope('single')}
-            className={`px-2.5 py-1 rounded-md font-medium transition flex items-center gap-1.5 ${
-              targetScope === 'single'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <span>Single Bot {selectedBotId ? `(${bots.find(b => b.id === selectedBotId)?.displayName || '1'})` : ''}</span>
-          </button>
+            <button
+              onClick={() => setTargetScope('single')}
+              className={`px-3 py-1 rounded-md font-semibold text-xs transition flex items-center gap-1.5 ${
+                targetScope === 'single'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <UserCircle className="w-3.5 h-3.5" />
+              <span className="max-w-[150px] truncate">
+                Single {selectedBotId ? `(${bots.find(b => b.id === selectedBotId)?.displayName || '1'})` : ''}
+              </span>
+            </button>
+          </div>
         </div>
 
-        {/* Granular Field Checkboxes */}
-        <div className="flex items-center gap-3 flex-wrap text-muted-foreground border-t md:border-t-0 md:border-l border-border pt-2 md:pt-0 md:pl-3">
-          <span className="font-semibold text-foreground text-[11px]">Fields to update:</span>
+        {/* Granular Field Toggle Chips */}
+        <div className="flex items-center gap-2 flex-wrap border-t md:border-t-0 md:border-l border-border/60 pt-3 md:pt-0 md:pl-4">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-1">
+            Update Fields:
+          </span>
 
-          <label className="flex items-center gap-1 cursor-pointer hover:text-foreground">
-            <input
-              type="checkbox"
-              checked={applyAvatar}
-              onChange={(e) => setApplyAvatar(e.target.checked)}
-              className="rounded border-border text-primary focus:ring-primary h-3 w-3"
-            />
+          <button
+            type="button"
+            onClick={() => setApplyAvatar(!applyAvatar)}
+            className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 ${
+              applyAvatar
+                ? 'bg-primary/10 border-primary/40 text-primary shadow-xs'
+                : 'bg-secondary/50 border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <ImageIcon className="w-3 h-3" />
             <span>Avatar</span>
-          </label>
+            {applyAvatar && <Check className="w-3 h-3 stroke-[3]" />}
+          </button>
 
-          <label className="flex items-center gap-1 cursor-pointer hover:text-foreground">
-            <input
-              type="checkbox"
-              checked={applyBanner}
-              onChange={(e) => setApplyBanner(e.target.checked)}
-              className="rounded border-border text-primary focus:ring-primary h-3 w-3"
-            />
+          <button
+            type="button"
+            onClick={() => setApplyBanner(!applyBanner)}
+            className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 ${
+              applyBanner
+                ? 'bg-primary/10 border-primary/40 text-primary shadow-xs'
+                : 'bg-secondary/50 border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Palette className="w-3 h-3" />
             <span>Banner</span>
-          </label>
+            {applyBanner && <Check className="w-3 h-3 stroke-[3]" />}
+          </button>
 
-          <label className="flex items-center gap-1 cursor-pointer hover:text-foreground">
-            <input
-              type="checkbox"
-              checked={applyBio}
-              onChange={(e) => setApplyBio(e.target.checked)}
-              className="rounded border-border text-primary focus:ring-primary h-3 w-3"
-            />
+          <button
+            type="button"
+            onClick={() => setApplyBio(!applyBio)}
+            className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 ${
+              applyBio
+                ? 'bg-primary/10 border-primary/40 text-primary shadow-xs'
+                : 'bg-secondary/50 border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <FileText className="w-3 h-3" />
             <span>Bio</span>
-          </label>
+            {applyBio && <Check className="w-3 h-3 stroke-[3]" />}
+          </button>
 
-          <label className="flex items-center gap-1 cursor-pointer hover:text-foreground">
-            <input
-              type="checkbox"
-              checked={applyStatus}
-              onChange={(e) => setApplyStatus(e.target.checked)}
-              className="rounded border-border text-primary focus:ring-primary h-3 w-3"
-            />
+          <button
+            type="button"
+            onClick={() => setApplyStatus(!applyStatus)}
+            className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 ${
+              applyStatus
+                ? 'bg-primary/10 border-primary/40 text-primary shadow-xs'
+                : 'bg-secondary/50 border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Activity className="w-3 h-3" />
             <span>Status</span>
-          </label>
+            {applyStatus && <Check className="w-3 h-3 stroke-[3]" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setApplyName(!applyName)}
+            className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 ${
+              applyName
+                ? 'bg-primary/10 border-primary/40 text-primary shadow-xs'
+                : 'bg-secondary/50 border-border text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Type className="w-3 h-3" />
+            <span>Name</span>
+            {applyName && <Check className="w-3 h-3 stroke-[3]" />}
+          </button>
         </div>
       </div>
 
       {/* MAIN TWO-COLUMN WORKBENCH */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* LEFT COLUMN: EDITOR & PRESETS (7 COLS) */}
-        <div className="lg:col-span-7 space-y-4">
-          <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        <div className="lg:col-span-7 space-y-5">
+          <div className="bg-card border border-border/80 rounded-2xl p-5 shadow-sm space-y-5">
             {/* TABS HEADER */}
-            <div className="flex items-center justify-between border-b border-border pb-2.5">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between border-b border-border/70 pb-3">
+              <div className="flex items-center bg-secondary/80 p-1 rounded-lg border border-border/60">
                 <button
                   onClick={() => setEditorTab('editor')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
                     editorTab === 'editor'
-                      ? 'bg-secondary text-primary'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
@@ -546,9 +623,9 @@ export default function BotProfilesPage() {
 
                 <button
                   onClick={() => setEditorTab('presets')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
                     editorTab === 'presets'
-                      ? 'bg-secondary text-primary'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
@@ -559,21 +636,22 @@ export default function BotProfilesPage() {
 
               <button
                 onClick={handleRandomizeEditor}
-                className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium px-2 py-0.5 rounded bg-primary/10 transition"
+                className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-semibold px-2.5 py-1 rounded-lg bg-primary/10 hover:bg-primary/15 border border-primary/20 transition"
               >
-                <Shuffle className="w-3 h-3" />
+                <Shuffle className="w-3.5 h-3.5" />
                 <span>Quick Randomize</span>
               </button>
             </div>
 
             {editorTab === 'editor' ? (
               /* CUSTOM FORM EDITOR */
-              <div className="space-y-3.5 text-xs">
+              <div className="space-y-4 text-xs">
                 {/* 1. Display Name / Nickname */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-foreground">
-                      Bot Display Name / Username
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-foreground flex items-center gap-1.5">
+                      <Type className="w-3.5 h-3.5 text-primary" />
+                      <span>Bot Display Name / Username</span>
                     </label>
                     <span className="text-[11px] text-muted-foreground">Up to 32 characters</span>
                   </div>
@@ -581,13 +659,14 @@ export default function BotProfilesPage() {
                     <input
                       type="text"
                       value={displayName}
+                      maxLength={32}
                       onChange={(e) => setDisplayName(e.target.value)}
                       placeholder="e.g. AIZEN !!"
-                      className="w-full px-2.5 py-1.5 rounded-md bg-secondary border border-border text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary text-xs"
                     />
                     <button
                       onClick={() => setDisplayName(`Bot #${Math.floor(Math.random() * 900 + 100)}`)}
-                      className="px-2.5 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 border border-border text-muted-foreground hover:text-foreground shrink-0 transition"
+                      className="px-3 py-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-muted-foreground hover:text-foreground shrink-0 transition"
                       title="Generate Name"
                     >
                       <Shuffle className="w-3.5 h-3.5" />
@@ -595,96 +674,267 @@ export default function BotProfilesPage() {
                   </div>
                 </div>
 
-                {/* 2. Avatar / Profile Picture */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-foreground">
-                      Profile Picture (Avatar)
+                {/* 2. Avatar / Profile Picture - Visual Media Slot */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-foreground flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5 text-primary" />
+                      <span>Profile Picture (Avatar)</span>
                     </label>
-                    <span className="text-[11px] text-muted-foreground">PNG, JPEG, Web URL, or Upload</span>
+                    <span className="text-[11px] text-muted-foreground">PNG, JPEG, GIF (Max 8MB)</span>
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={avatarUrl}
-                      onChange={(e) => setAvatarUrl(e.target.value)}
-                      placeholder="https://... or data:image/png;base64,..."
-                      className="w-full px-2.5 py-1.5 rounded-md bg-secondary border border-border text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary truncate"
-                    />
-                    <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 border border-border text-foreground font-medium cursor-pointer shrink-0 transition">
-                      <Upload className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span>Upload</span>
+
+                  <div className="p-3.5 rounded-xl bg-secondary/40 border border-border/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-12 h-12 rounded-xl border border-border bg-card overflow-hidden shrink-0 flex items-center justify-center shadow-inner">
+                        {avatarUrl ? (
+                          <img
+                            src={avatarUrl}
+                            alt="Avatar Preview"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Bot className="w-6 h-6 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-foreground truncate">
+                          {avatarUrl ? (
+                            avatarUrl.startsWith('data:') ? (
+                              <span className="inline-flex items-center gap-1.5 text-emerald-400">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Custom Image Loaded</span>
+                              </span>
+                            ) : (
+                              <span className="truncate block max-w-[200px]" title={avatarUrl}>
+                                {avatarUrl}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-muted-foreground">Default Bot Avatar</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">
+                          {avatarUrl ? (
+                            avatarUrl.startsWith('data:') ? 'Base64 Encoded • Ready for Discord sync' : 'Remote Web URL'
+                          ) : (
+                            'Upload a custom image or pick a preset'
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-card hover:bg-card/80 border border-border text-foreground font-semibold text-[11px] cursor-pointer shadow-xs transition">
+                        <Upload className="w-3 h-3 text-primary" />
+                        <span>Upload</span>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/gif"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, 'avatar')}
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsAvatarUrlInputOpen(!isAvatarUrlInputOpen)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition ${
+                          isAvatarUrlInputOpen
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-card hover:bg-card/80 border-border text-foreground'
+                        }`}
+                        title="Enter image URL"
+                      >
+                        <Link2 className="w-3 h-3" />
+                        <span>URL</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const random = PROFILE_PRESETS[Math.floor(Math.random() * PROFILE_PRESETS.length)];
+                          setAvatarUrl(random.avatarUrl);
+                        }}
+                        className="p-1.5 rounded-lg bg-card hover:bg-card/80 border border-border text-muted-foreground hover:text-foreground transition"
+                        title="Random Avatar"
+                      >
+                        <Shuffle className="w-3.5 h-3.5" />
+                      </button>
+
+                      {avatarUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setAvatarUrl('')}
+                          className="p-1.5 rounded-lg bg-card hover:bg-destructive/15 text-muted-foreground hover:text-destructive border border-border hover:border-destructive/30 transition"
+                          title="Reset to default"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Collapsible URL Input Bar */}
+                  {isAvatarUrlInputOpen && (
+                    <div className="p-2.5 rounded-xl bg-secondary/70 border border-border flex items-center gap-2 animate-in fade-in duration-150">
                       <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/gif"
-                        className="hidden"
-                        onChange={(e) => handleFileUpload(e, 'avatar')}
+                        type="text"
+                        value={avatarUrl}
+                        onChange={(e) => setAvatarUrl(e.target.value)}
+                        placeholder="Paste image URL (https://...)"
+                        className="w-full px-3 py-1.5 rounded-lg bg-card border border-border text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary"
                       />
-                    </label>
-                    <button
-                      onClick={() => {
-                        const random = PROFILE_PRESETS[Math.floor(Math.random() * PROFILE_PRESETS.length)];
-                        setAvatarUrl(random.avatarUrl);
-                      }}
-                      className="px-2 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 border border-border text-muted-foreground hover:text-foreground shrink-0 transition"
-                      title="Random Avatar"
-                    >
-                      <Shuffle className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsAvatarUrlInputOpen(false)}
+                        className="px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-[11px] font-semibold text-foreground border border-border transition shrink-0"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {/* 3. Banner Image / Color */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-foreground">
-                      Profile Banner
+                {/* 3. Banner Image / Color - Visual Media Slot */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-foreground flex items-center gap-1.5">
+                      <Palette className="w-3.5 h-3.5 text-primary" />
+                      <span>Profile Banner</span>
                     </label>
-                    <span className="text-[11px] text-muted-foreground">Hex color (#1e1b4b), Image URL, or Upload</span>
+                    <span className="text-[11px] text-muted-foreground">Image URL, Upload, or Hex (#1e1b4b)</span>
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={bannerUrl}
-                      onChange={(e) => setBannerUrl(e.target.value)}
-                      placeholder="#5865f2 or https://... or Base64"
-                      className="w-full px-2.5 py-1.5 rounded-md bg-secondary border border-border text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary truncate"
-                    />
-                    <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 border border-border text-foreground font-medium cursor-pointer shrink-0 transition">
-                      <Upload className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span>Upload</span>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/gif"
-                        className="hidden"
-                        onChange={(e) => handleFileUpload(e, 'banner')}
+
+                  <div className="p-3.5 rounded-xl bg-secondary/40 border border-border/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className="w-16 h-10 rounded-lg border border-border overflow-hidden shrink-0 flex items-center justify-center shadow-inner relative bg-cover bg-center"
+                        style={{
+                          backgroundImage:
+                            bannerUrl.startsWith('data:') || bannerUrl.startsWith('http')
+                              ? `url("${bannerUrl}")`
+                              : undefined,
+                          backgroundColor:
+                            !bannerUrl.startsWith('data:') && !bannerUrl.startsWith('http')
+                              ? bannerUrl || accentColor || '#1e1b4b'
+                              : undefined,
+                        }}
                       />
-                    </label>
-                    <button
-                      onClick={() => {
-                        const random = PROFILE_PRESETS[Math.floor(Math.random() * PROFILE_PRESETS.length)];
-                        setBannerUrl(random.bannerUrl);
-                      }}
-                      className="px-2 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 border border-border text-muted-foreground hover:text-foreground shrink-0 transition"
-                      title="Random Banner"
-                    >
-                      <Shuffle className="w-3.5 h-3.5" />
-                    </button>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-foreground truncate">
+                          {bannerUrl ? (
+                            bannerUrl.startsWith('data:') ? (
+                              <span className="inline-flex items-center gap-1.5 text-emerald-400">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Custom Banner Loaded</span>
+                              </span>
+                            ) : bannerUrl.startsWith('#') ? (
+                              <span>Solid Color ({bannerUrl})</span>
+                            ) : (
+                              <span className="truncate block max-w-[200px]" title={bannerUrl}>
+                                {bannerUrl}
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-muted-foreground">Accent Color Fallback</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">
+                          {bannerUrl ? (
+                            bannerUrl.startsWith('data:') ? 'Base64 Encoded • Ready for Discord sync' : 'Custom banner'
+                          ) : (
+                            'Custom background image or solid color'
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-card hover:bg-card/80 border border-border text-foreground font-semibold text-[11px] cursor-pointer shadow-xs transition">
+                        <Upload className="w-3 h-3 text-primary" />
+                        <span>Upload</span>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/gif"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, 'banner')}
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsBannerUrlInputOpen(!isBannerUrlInputOpen)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition ${
+                          isBannerUrlInputOpen
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-card hover:bg-card/80 border-border text-foreground'
+                        }`}
+                        title="Enter banner URL or color"
+                      >
+                        <Link2 className="w-3 h-3" />
+                        <span>URL / Color</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const random = PROFILE_PRESETS[Math.floor(Math.random() * PROFILE_PRESETS.length)];
+                          setBannerUrl(random.bannerUrl);
+                        }}
+                        className="p-1.5 rounded-lg bg-card hover:bg-card/80 border border-border text-muted-foreground hover:text-foreground transition"
+                        title="Random Banner"
+                      >
+                        <Shuffle className="w-3.5 h-3.5" />
+                      </button>
+
+                      {bannerUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setBannerUrl('')}
+                          className="p-1.5 rounded-lg bg-card hover:bg-destructive/15 text-muted-foreground hover:text-destructive border border-border hover:border-destructive/30 transition"
+                          title="Reset to default"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Collapsible Direct URL/Color Input */}
+                  {isBannerUrlInputOpen && (
+                    <div className="p-2.5 rounded-xl bg-secondary/70 border border-border flex items-center gap-2 animate-in fade-in duration-150">
+                      <input
+                        type="text"
+                        value={bannerUrl}
+                        onChange={(e) => setBannerUrl(e.target.value)}
+                        placeholder="Paste image URL (https://...) or hex color (#1e1b4b)"
+                        className="w-full px-3 py-1.5 rounded-lg bg-card border border-border text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsBannerUrlInputOpen(false)}
+                        className="px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/80 text-[11px] font-semibold text-foreground border border-border transition shrink-0"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* 4. About Me (Bio) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-foreground">
-                      About Me (Discord Application Bio)
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-foreground flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-primary" />
+                      <span>About Me (Discord Application Bio)</span>
                     </label>
                     <button
                       onClick={() => {
                         const random = PROFILE_PRESETS[Math.floor(Math.random() * PROFILE_PRESETS.length)];
                         setBio(random.bio);
                       }}
-                      className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80"
+                      className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold"
                     >
                       <Shuffle className="w-3 h-3" />
                       <span>Random Bio</span>
@@ -695,14 +945,14 @@ export default function BotProfilesPage() {
                     value={bio}
                     onChange={(e) => setBio(e.target.value)}
                     placeholder="Enter bot description displayed on user profile..."
-                    className="w-full px-2.5 py-1.5 rounded-md bg-secondary border border-border text-foreground font-sans focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed resize-none"
+                    className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground font-sans focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed resize-none text-xs"
                   />
                 </div>
 
                 {/* 5. Custom Status & Activity */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="font-semibold text-foreground block mb-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-foreground block">
                       Status Message
                     </label>
                     <div className="flex gap-2">
@@ -711,7 +961,7 @@ export default function BotProfilesPage() {
                         value={customStatus}
                         onChange={(e) => setCustomStatus(e.target.value)}
                         placeholder="e.g. Standing atop the heavens"
-                        className="w-full px-2.5 py-1.5 rounded-md bg-secondary border border-border text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                        className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary text-xs"
                       />
                       <button
                         onClick={() => {
@@ -719,7 +969,7 @@ export default function BotProfilesPage() {
                           setCustomStatus(random.customStatus);
                           setActivityType(random.activityType);
                         }}
-                        className="px-2 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 border border-border text-muted-foreground hover:text-foreground shrink-0 transition"
+                        className="px-2.5 py-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-muted-foreground hover:text-foreground shrink-0 transition"
                         title="Random Status"
                       >
                         <Shuffle className="w-3.5 h-3.5" />
@@ -727,14 +977,14 @@ export default function BotProfilesPage() {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="font-semibold text-foreground block mb-1">
+                  <div className="space-y-1.5">
+                    <label className="font-semibold text-foreground block">
                       Presence Activity Type
                     </label>
                     <select
                       value={activityType}
                       onChange={(e) => setActivityType(e.target.value as any)}
-                      className="w-full px-2.5 py-1.5 rounded-md bg-secondary border border-border text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary text-xs"
                     >
                       <option value="PLAYING">Playing</option>
                       <option value="LISTENING">Listening to</option>
@@ -747,13 +997,13 @@ export default function BotProfilesPage() {
                 </div>
 
                 {/* 6. Accent Color */}
-                <div>
-                  <label className="font-semibold text-foreground block mb-1">
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-foreground block">
                     Theme Accent Color
                   </label>
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-3">
                     <div
-                      className="w-7 h-7 rounded-md border border-border shadow-inner shrink-0"
+                      className="w-8 h-8 rounded-lg border border-border shadow-inner shrink-0 transition"
                       style={{ backgroundColor: accentColor }}
                     />
                     <input
@@ -761,7 +1011,7 @@ export default function BotProfilesPage() {
                       value={accentColor}
                       onChange={(e) => setAccentColor(e.target.value)}
                       placeholder="#5865f2"
-                      className="w-28 px-2 py-1 rounded-md bg-secondary border border-border text-foreground font-mono"
+                      className="w-28 px-3 py-1.5 rounded-lg bg-secondary border border-border text-foreground font-mono text-xs"
                     />
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {['#5865f2', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#64748b'].map(
@@ -769,7 +1019,11 @@ export default function BotProfilesPage() {
                           <button
                             key={col}
                             onClick={() => setAccentColor(col)}
-                            className="w-5 h-5 rounded-md border border-white/20 transition hover:scale-105"
+                            className={`w-6 h-6 rounded-md border transition hover:scale-110 ${
+                              accentColor.toLowerCase() === col.toLowerCase()
+                                ? 'border-white ring-2 ring-primary ring-offset-1'
+                                : 'border-white/20'
+                            }`}
                             style={{ backgroundColor: col }}
                             title={col}
                           />
@@ -781,37 +1035,59 @@ export default function BotProfilesPage() {
               </div>
             ) : (
               /* PRESET GALLERY PICKER */
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[440px] overflow-y-auto pr-1">
-                  {PROFILE_PRESETS.map((preset) => (
+              <div className="space-y-4">
+                {/* Theme Filter Bar */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                  {PROFILE_THEMES.map((th) => (
+                    <button
+                      key={th.id}
+                      onClick={() => setPresetThemeFilter(th.id)}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1.5 border ${
+                        presetThemeFilter === th.id
+                          ? 'bg-primary text-primary-foreground border-primary shadow-xs'
+                          : 'bg-secondary/60 hover:bg-secondary text-muted-foreground hover:text-foreground border-border/60'
+                      }`}
+                    >
+                      <span>{th.name}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 max-h-[460px] overflow-y-auto pr-1">
+                  {filteredPresets.map((preset) => (
                     <div
                       key={preset.id}
                       onClick={() => applyPresetToEditor(preset)}
-                      className="p-3 rounded-lg border border-border bg-secondary/40 hover:bg-secondary transition cursor-pointer flex flex-col gap-2 group"
+                      className="p-3.5 rounded-xl border border-border/80 bg-secondary/30 hover:bg-secondary/70 hover:border-border transition-all cursor-pointer flex flex-col justify-between gap-3 group shadow-xs"
                     >
-                      <div className="flex items-center gap-2.5">
-                        <img
-                          src={preset.avatarUrl}
-                          alt={preset.name}
-                          className="w-9 h-9 rounded-full border border-border shrink-0 object-cover"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <h4 className="text-xs font-semibold text-foreground group-hover:text-primary transition truncate">
-                            {preset.name}
-                          </h4>
-                          <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
-                            {preset.theme}
-                          </span>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={preset.avatarUrl}
+                            alt={preset.name}
+                            className="w-10 h-10 rounded-xl border border-border/80 shrink-0 object-cover shadow-sm"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs font-bold text-foreground group-hover:text-primary transition truncate">
+                              {preset.name}
+                            </h4>
+                            <span className="inline-block text-[10px] uppercase font-bold text-muted-foreground tracking-wider bg-secondary px-1.5 py-0.5 rounded border border-border/50 mt-0.5">
+                              {preset.theme}
+                            </span>
+                          </div>
                         </div>
+
+                        <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                          {preset.bio}
+                        </p>
                       </div>
 
-                      <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
-                        {preset.bio}
-                      </p>
-
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground border-t border-border/40 pt-1.5">
-                        <span className="truncate">{preset.customStatus}</span>
-                        <span className="text-primary font-semibold shrink-0">Select Preset →</span>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground border-t border-border/40 pt-2 font-medium">
+                        <span className="truncate max-w-[140px] font-mono text-[10px]">{preset.customStatus}</span>
+                        <span className="text-primary group-hover:underline inline-flex items-center gap-0.5 font-semibold text-[11px]">
+                          <span>Apply</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -822,15 +1098,15 @@ export default function BotProfilesPage() {
 
           {/* APPLICATION RESULTS BREAKDOWN */}
           {saveResults && saveResults.length > 0 && (
-            <div className="bg-card border border-border rounded-lg p-3 text-xs space-y-2.5">
+            <div className="bg-card border border-border rounded-xl p-4 text-xs space-y-3 shadow-sm">
               <div className="flex items-center justify-between font-semibold text-foreground pb-2 border-b border-border/60">
                 <div className="flex items-center gap-2">
                   <span>Discord Sync Report</span>
-                  <span className="px-1.5 py-0.2 rounded bg-secondary text-[10px] font-mono">
+                  <span className="px-2 py-0.5 rounded bg-secondary text-[10px] font-mono border border-border/50">
                     {saveResults.length} bots
                   </span>
                 </div>
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <div className="flex items-center gap-3 text-[10px] font-medium">
                   <span className="text-emerald-400">✓ Updated</span>
                   <span className="text-amber-400">⏱️ Cooldown</span>
                 </div>
@@ -840,7 +1116,7 @@ export default function BotProfilesPage() {
                 {saveResults.map((res) => (
                   <div
                     key={res.botId}
-                    className="p-2 rounded bg-secondary/40 border border-border/60 flex items-center justify-between gap-2"
+                    className="p-2.5 rounded-lg bg-secondary/40 border border-border/60 flex items-center justify-between gap-2"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {res.success ? (
@@ -848,30 +1124,26 @@ export default function BotProfilesPage() {
                       ) : (
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                       )}
-                      <span className="font-medium text-foreground truncate">{res.displayName}</span>
+                      <span className="font-semibold text-foreground truncate">{res.displayName}</span>
                     </div>
 
                     <div className="flex items-center gap-2 text-[10px] shrink-0 font-medium">
-                      {/* Avatar status */}
                       {res.avatarUpdated ? (
                         <span className="text-emerald-400">Avatar ✓</span>
                       ) : res.avatarRateLimited ? (
                         <span className="text-amber-400" title="Discord 10-min avatar cooldown">Avatar ⏱️</span>
                       ) : null}
 
-                      {/* Banner status */}
                       {res.bannerUpdated ? (
                         <span className="text-emerald-400">Banner ✓</span>
                       ) : res.bannerRateLimited ? (
                         <span className="text-amber-400" title="Discord 10-min banner cooldown">Banner ⏱️</span>
                       ) : null}
 
-                      {/* Bio status */}
                       {res.bioUpdated && (
                         <span className="text-emerald-400">Bio ✓</span>
                       )}
 
-                      {/* Status presence */}
                       {res.statusUpdated && (
                         <span className="text-emerald-400">Status ✓</span>
                       )}
@@ -884,12 +1156,12 @@ export default function BotProfilesPage() {
         </div>
 
         {/* RIGHT COLUMN: DISCORD CLIENT PROFILE PREVIEW & FLEET SELECTOR (5 COLS) */}
-        <div className="lg:col-span-5 space-y-4">
+        <div className="lg:col-span-5 space-y-5">
           {/* DISCORD PROFILE CARD MOCKUP */}
-          <div className="bg-[#111214] border border-[#232428] rounded-xl overflow-hidden shadow-xl text-left select-none">
+          <div className="bg-[#111214] border border-[#232428] rounded-2xl overflow-hidden shadow-2xl text-left select-none">
             {/* Banner */}
             <div
-              className="h-24 w-full relative bg-cover bg-center"
+              className="h-28 w-full relative bg-cover bg-center"
               style={{
                 backgroundImage:
                   bannerUrl.startsWith('data:') || bannerUrl.startsWith('http')
@@ -901,8 +1173,9 @@ export default function BotProfilesPage() {
                     : undefined,
               }}
             >
-              <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[10px] text-white/80 font-mono">
-                Discord Preview
+              <div className="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md text-[10px] text-white/90 font-mono border border-white/10 flex items-center gap-1.5 shadow-sm">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Discord Preview</span>
               </div>
             </div>
 
@@ -910,7 +1183,7 @@ export default function BotProfilesPage() {
             <div className="px-4 pb-4 pt-0 relative bg-[#111214]">
               {/* Overlapping Avatar with Ring */}
               <div className="relative -mt-10 mb-2.5 inline-block">
-                <div className="w-16 h-16 rounded-full border-4 border-[#111214] bg-[#1e1f22] overflow-hidden shadow-md relative">
+                <div className="w-18 h-18 rounded-full border-4 border-[#111214] bg-[#1e1f22] overflow-hidden shadow-xl relative flex items-center justify-center">
                   {avatarUrl ? (
                     <img
                       src={avatarUrl}
@@ -918,66 +1191,72 @@ export default function BotProfilesPage() {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-[#5865F2]/20 text-[#5865F2]">
-                      <Bot className="w-8 h-8" />
-                    </div>
+                    <Bot className="w-9 h-9 text-[#5865F2]" />
                   )}
                 </div>
                 {/* Online Status Pill */}
                 <div
-                  className="w-4 h-4 rounded-full bg-[#23a55a] border-4 border-[#111214] absolute bottom-0 right-0"
+                  className="w-5 h-5 rounded-full bg-[#23a55a] border-4 border-[#111214] absolute bottom-0 right-0 shadow-sm"
                   title="Online"
                 />
               </div>
 
               {/* Bot Names and Badge */}
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <h3 className="text-sm font-bold text-white tracking-wide">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-bold text-white tracking-tight">
                     {displayName || 'AIZEN !!'}
                   </h3>
-                  <span className="px-1 py-0.2 rounded bg-[#5865F2] text-white text-[9px] font-black uppercase tracking-wider">
-                    BOT
+                  <span className="px-1.5 py-0.5 rounded bg-[#5865F2] text-white text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                    <span>BOT</span>
                   </span>
-                  <span className="text-[11px] text-[#949ba4] font-medium">
+                  <span className="text-xs text-[#949ba4] font-medium font-mono">
                     #0000
                   </span>
                 </div>
 
-                {/* Custom Status */}
+                {/* Custom Status with Activity icon */}
                 {customStatus && (
-                  <div className="text-xs text-[#dbdee1] flex items-center gap-1 pt-0.5 font-normal">
-                    <span>{customStatus}</span>
+                  <div className="text-xs text-[#dbdee1] flex items-center gap-1.5 pt-0.5 font-normal">
+                    <Activity className="w-3.5 h-3.5 text-[#949ba4] shrink-0" />
+                    <span>
+                      {activityType === 'PLAYING' ? 'Playing ' : activityType === 'WATCHING' ? 'Watching ' : activityType === 'LISTENING' ? 'Listening to ' : ''}
+                      <strong>{customStatus}</strong>
+                    </span>
                   </div>
                 )}
               </div>
 
-              <div className="h-px bg-[#232428] my-3" />
+              <div className="h-px bg-[#232428] my-3.5" />
 
               {/* ABOUT ME SECTION */}
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <h4 className="text-[10px] font-bold text-[#b5bac1] uppercase tracking-wider">
                   About Me
                 </h4>
-                <div className="text-xs text-[#dbdee1] leading-relaxed whitespace-pre-line font-sans bg-[#1e1f22] p-2.5 rounded-lg border border-[#2b2d31]">
+                <div className="text-xs text-[#dbdee1] leading-relaxed whitespace-pre-line font-sans bg-[#1e1f22] p-3 rounded-xl border border-[#2b2d31] shadow-inner">
                   {bio || 'No bio configured yet. Customize in the editor or select a preset.'}
                 </div>
               </div>
 
               {/* FLEET ROLES & STUDIO BADGES */}
-              <div className="mt-3 space-y-1">
+              <div className="mt-3.5 space-y-1.5">
                 <h4 className="text-[10px] font-bold text-[#b5bac1] uppercase tracking-wider">
                   Roles
                 </h4>
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="px-2 py-0.5 rounded bg-[#2b2d31] text-[10px] text-[#dbdee1] font-medium border border-white/5">
-                    LOUD Studio
+                  <span className="px-2.5 py-1 rounded-md bg-[#2b2d31] text-[11px] text-[#dbdee1] font-medium border border-white/5 inline-flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#5865F2]" />
+                    <span>LOUD Studio</span>
                   </span>
-                  <span className="px-2 py-0.5 rounded bg-[#2b2d31] text-[10px] text-[#dbdee1] font-medium border border-white/5">
-                    Voice Operator
+                  <span className="px-2.5 py-1 rounded-md bg-[#2b2d31] text-[11px] text-[#dbdee1] font-medium border border-white/5 inline-flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#10b981]" />
+                    <span>Voice Operator</span>
                   </span>
-                  <span className="px-2 py-0.5 rounded bg-[#2b2d31] text-[10px] text-emerald-400 font-medium border border-white/5">
-                    Heartbeat Active
+                  <span className="px-2.5 py-1 rounded-md bg-[#2b2d31] text-[11px] text-emerald-400 font-medium border border-white/5 inline-flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Heartbeat Active</span>
                   </span>
                 </div>
               </div>
@@ -985,46 +1264,83 @@ export default function BotProfilesPage() {
           </div>
 
           {/* FLEET BOT SELECTOR */}
-          <div className="bg-card border border-border rounded-lg p-3 space-y-2.5">
+          <div className="bg-card border border-border/80 rounded-2xl p-4 space-y-3.5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <h4 className="text-xs font-semibold text-foreground">Fleet Bots ({bots.length})</h4>
+                <h4 className="text-xs font-bold text-foreground">Fleet Bots Roster ({bots.length})</h4>
                 <p className="text-[11px] text-muted-foreground">Select bots to target for profile updates</p>
               </div>
 
               <div className="flex items-center gap-1 text-[11px]">
                 <button
+                  type="button"
                   onClick={selectAllFiltered}
-                  className="px-2 py-0.5 rounded bg-secondary hover:bg-secondary/80 text-foreground transition font-medium"
+                  className="px-2.5 py-1 rounded-md bg-secondary hover:bg-secondary/80 text-foreground transition font-semibold"
                 >
                   Select All
                 </button>
                 <button
+                  type="button"
                   onClick={clearSelection}
-                  className="px-2 py-0.5 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground transition"
+                  className="px-2.5 py-1 rounded-md bg-secondary hover:bg-secondary/80 text-muted-foreground transition font-medium"
                 >
                   Clear
                 </button>
               </div>
             </div>
 
-            {/* Search Input */}
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Filter bots by name or ID..."
-                className="w-full pl-8 pr-2.5 py-1 text-xs rounded-md bg-secondary border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              />
+            {/* Search Input & Online Filter */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Filter bots by name or ID..."
+                  className="w-full pl-8 pr-7 py-1.5 text-xs rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex bg-secondary p-0.5 rounded-lg border border-border shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setFilterOnline('all')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                    filterOnline === 'all'
+                      ? 'bg-card text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterOnline('online')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                    filterOnline === 'online'
+                      ? 'bg-card text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Online
+                </button>
+              </div>
             </div>
 
             {/* List of Bots */}
-            <div className="max-h-[200px] overflow-y-auto space-y-1 pr-1">
+            <div className="max-h-[220px] overflow-y-auto space-y-1.5 pr-1">
               {filteredBots.length === 0 ? (
-                <div className="p-3 text-center text-xs text-muted-foreground">
-                  No bots found.
+                <div className="p-4 text-center text-xs text-muted-foreground bg-secondary/30 rounded-lg">
+                  No bots match your search filter.
                 </div>
               ) : (
                 filteredBots.map((b) => {
@@ -1034,51 +1350,54 @@ export default function BotProfilesPage() {
                   return (
                     <div
                       key={b.id}
-                      className={`p-2 rounded-md border transition flex items-center justify-between gap-2 cursor-pointer ${
+                      className={`p-2.5 rounded-lg border transition-all flex items-center justify-between gap-2.5 cursor-pointer ${
                         isSingleSelected
-                          ? 'bg-[#5865F2]/10 border-[#5865F2]'
+                          ? 'bg-primary/10 border-primary shadow-xs'
                           : isChecked
-                          ? 'bg-secondary border-[#5865F2]/40'
+                          ? 'bg-secondary border-primary/40'
                           : 'bg-secondary/40 hover:bg-secondary/70 border-border/60'
                       }`}
                       onClick={() => handleSelectSingleBot(b.id)}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        {/* Multi-select Checkbox */}
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {/* Multi-select Checkbox Button */}
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleSelectBot(b.id);
                           }}
-                          className="text-muted-foreground hover:text-primary transition p-0.5"
+                          className="text-muted-foreground hover:text-primary transition p-0.5 shrink-0"
+                          title={isChecked ? 'Deselect bot' : 'Select bot'}
                         >
                           {isChecked ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                            <CheckSquare className="w-4 h-4 text-primary" />
                           ) : (
-                            <Square className="w-3.5 h-3.5" />
+                            <Square className="w-4 h-4" />
                           )}
                         </button>
 
                         {/* Bot Thumbnail */}
-                        {b.avatarUrl ? (
-                          <img
-                            src={b.avatarUrl}
-                            alt={b.displayName}
-                            className="w-6 h-6 rounded-full object-cover shrink-0 border border-border"
-                          />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-[#5865F2]/20 text-[#5865F2] flex items-center justify-center shrink-0 text-xs font-bold">
-                            🤖
-                          </div>
-                        )}
+                        <div className="relative shrink-0">
+                          {b.avatarUrl ? (
+                            <img
+                              src={b.avatarUrl}
+                              alt={b.displayName}
+                              className="w-7 h-7 rounded-full object-cover border border-border"
+                            />
+                          ) : (
+                            <div className="w-7 h-7 rounded-full bg-primary/15 text-primary flex items-center justify-center font-bold text-xs">
+                              <Bot className="w-4 h-4" />
+                            </div>
+                          )}
+                          {b.online && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 border border-card absolute -bottom-0.5 -right-0.5" />
+                          )}
+                        </div>
 
                         <div className="min-w-0">
-                          <div className="text-xs font-medium text-foreground truncate flex items-center gap-1.5">
-                            <span>{b.displayName}</span>
-                            {b.online && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                            )}
+                          <div className="text-xs font-semibold text-foreground truncate flex items-center gap-1.5">
+                            <span className="truncate">{b.displayName}</span>
                           </div>
                           <div className="text-[10px] text-muted-foreground font-mono truncate">
                             {b.applicationId}
@@ -1087,7 +1406,11 @@ export default function BotProfilesPage() {
                       </div>
 
                       <div className="text-right shrink-0">
-                        <span className="text-[10px] text-muted-foreground font-mono">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-medium ${
+                          b.customStatus
+                            ? 'bg-primary/10 text-primary border-primary/20'
+                            : 'bg-secondary text-muted-foreground border-border/60'
+                        }`}>
                           {b.customStatus ? 'Customized' : 'Default'}
                         </span>
                       </div>

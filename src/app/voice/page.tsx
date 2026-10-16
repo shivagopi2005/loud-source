@@ -101,7 +101,7 @@ export default function LiveVoiceStudioPage() {
 
   // Audio routing mode ('dj' = mic + music mixed, 'music' = Spotify/YouTube only, 'mic' = voice only)
   const [audioSourceMode, setAudioSourceMode] = useState<'dj' | 'music' | 'mic'>('dj');
-  const [activeDeckTab, setActiveDeckTab] = useState<'music' | 'mic'>('music');
+  const [activeDeckTab, setActiveDeckTab] = useState<'music' | 'file' | 'mic'>('music');
 
   // Microphone hardware & processing state
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -287,6 +287,14 @@ export default function LiveVoiceStudioPage() {
 
     const cachedGuilds = getCachedData<any[]>(cacheKeyGuilds);
     const cachedBots = getCachedData<any[]>(cacheKeyBots);
+    const isExcludedVoiceBot = (b: any) =>
+      b.operationalRole === 'oauth_redirect' ||
+      b.applicationId === '1560261747137454161' ||
+      b.displayName === 'Roynix Loud' ||
+      b.displayName === 'Integration Test Bot' ||
+      b.tags?.includes('oauth') ||
+      b.tags?.includes('redirect');
+
     if (cachedGuilds && cachedGuilds.length > 0) {
       setGuildsList(cachedGuilds);
     }
@@ -294,7 +302,7 @@ export default function LiveVoiceStudioPage() {
       const readyCachedBots = cachedBots.filter(
         (b: any) =>
           (b.status === 'ready' || b.status === 'connected' || b.online) &&
-          b.displayName !== 'Integration Test Bot'
+          !isExcludedVoiceBot(b)
       );
       setBotsList(readyCachedBots);
       if (selectedFleetBotIds.length === 0 && readyCachedBots.length > 0) {
@@ -317,7 +325,7 @@ export default function LiveVoiceStudioPage() {
         const readyBots = rawBots.filter(
           (b: any) =>
             (b.status === 'ready' || b.status === 'connected' || b.online) &&
-            b.displayName !== 'Integration Test Bot'
+            !isExcludedVoiceBot(b)
         );
 
         setGuildsList(guilds);
@@ -1741,35 +1749,44 @@ export default function LiveVoiceStudioPage() {
   return (
     <div className="space-y-6">
       {/* HEADER SECTION */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-1 border-b border-border/50">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
-            <Radio className="w-6 h-6 text-primary" />
-            <span>Live Voice &amp; Music Studio</span>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+              <Radio className="w-5 h-5 text-primary" />
+              <span>Live Voice &amp; Music Studio</span>
+            </h1>
             <span
-              className={`text-xs font-bold uppercase px-2.5 py-0.5 rounded-full border ${
+              className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border transition ${
                 sessionState === 'streaming'
-                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 animate-pulse'
-                  : 'bg-secondary text-muted-foreground border-border'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : 'bg-secondary text-muted-foreground border-border/80'
               }`}
             >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  sessionState === 'streaming'
+                    ? 'bg-emerald-400 animate-pulse'
+                    : 'bg-muted-foreground/60'
+                }`}
+              />
               {sessionState === 'streaming' ? 'Live Transmitting' : 'Studio Standby'}
             </span>
-          </h1>
+          </div>
           <p className="text-xs text-muted-foreground mt-1">
-            Connect all Discord bots to your chosen channel with up to 10000% volume and broadcast your voice, Spotify, and YouTube Music live.
+            Broadcast studio-grade microphone audio, browser tab audio (Spotify, YouTube), and media files directly to Discord voice channels.
           </p>
         </div>
 
         {/* Master Controls & Global Emergency Stop */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2.5">
           {sessionState === 'streaming' ? (
             <button
               onClick={handleStopSession}
-              className="flex items-center space-x-1.5 px-4 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground font-semibold text-xs border border-border shadow-sm transition"
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs border border-border shadow-xs transition cursor-pointer"
             >
               <Square className="w-3.5 h-3.5 fill-current" />
-              <span>Stop Audio Stream</span>
+              <span>Stop Broadcast</span>
             </button>
           ) : (
             <button
@@ -1781,23 +1798,19 @@ export default function LiveVoiceStudioPage() {
                   ? selectedFleetBotIds.length === 0 || !effectiveChannelId || !effectiveGuildId
                   : selectedDestinationIds.length === 0)
               }
-              className="flex items-center space-x-1.5 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/25 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center space-x-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-xs transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {sessionState === 'connecting' ? (
                 <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-amber-300" />
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary-foreground" />
                   <span>Connecting Bots to Channel...</span>
                 </>
               ) : (
                 <>
-                  <Play className="w-4 h-4 fill-current" />
+                  <Play className="w-3.5 h-3.5 fill-current" />
                   <span>
                     {routingMode === 'fleet'
-                      ? audioSourceMode === 'music'
-                        ? `Stream Spotify / Music to All (${selectedFleetBotIds.length}) Bots`
-                        : audioSourceMode === 'dj'
-                        ? `Stream Voice & Music to All (${selectedFleetBotIds.length}) Bots`
-                        : `Stream Voice to All (${selectedFleetBotIds.length}) Bots`
+                      ? `Stream to All (${selectedFleetBotIds.length}) Bots`
                       : 'Start Transmission'}
                   </span>
                 </>
@@ -1810,9 +1823,10 @@ export default function LiveVoiceStudioPage() {
               handleLocalEmergencyHalt();
               triggerEmergencyStop();
             }}
-            className="flex items-center space-x-1.5 px-4 py-2.5 rounded-lg bg-destructive hover:bg-destructive/90 text-white font-bold text-xs uppercase shadow-lg shadow-destructive/20 transition active:scale-95"
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-destructive/10 hover:bg-destructive hover:text-white text-destructive border border-destructive/30 font-semibold text-xs transition active:scale-95 cursor-pointer"
+            title="Immediately disconnect all active voice endpoints"
           >
-            <AlertOctagon className="w-4 h-4" />
+            <AlertOctagon className="w-3.5 h-3.5" />
             <span>Emergency Stop</span>
           </button>
         </div>
@@ -1827,81 +1841,103 @@ export default function LiveVoiceStudioPage() {
 
       {/* STUDIO LAYOUT GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 1. INPUT MIXER & MUSIC BRIDGE SECTION */}
-        <div className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-4">
-          {/* Deck Source Switcher */}
-          <div className="flex bg-secondary/80 p-1 rounded-xl text-xs border border-border">
-            <button
-              type="button"
-              onClick={() => {
-                handleAudioSourceModeChange('dj');
-                setActiveDeckTab('music');
-              }}
-              className={`flex-1 py-1.5 px-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition ${
-                audioSourceMode === 'dj'
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>DJ Studio</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                handleAudioSourceModeChange('music');
-                setActiveDeckTab('music');
-              }}
-              className={`flex-1 py-1.5 px-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition ${
-                audioSourceMode === 'music'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Music className="w-3.5 h-3.5" />
-              <span>Music Only</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                handleAudioSourceModeChange('mic');
-                setActiveDeckTab('mic');
-              }}
-              className={`flex-1 py-1.5 px-2 rounded-lg font-bold flex items-center justify-center gap-1.5 transition ${
-                audioSourceMode === 'mic'
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Mic className="w-3.5 h-3.5" />
-              <span>Mic Only</span>
-            </button>
-          </div>
-
-          {/* Sub-Deck Switcher Tabs (Spotify vs Mic) */}
-          <div className="flex items-center justify-between border-b border-border pb-2.5">
-            <div className="flex space-x-1.5">
+        {/* 1. INPUT MIXER & AUDIO SOURCES SECTION */}
+        <div className="bg-card border border-border rounded-xl p-5 shadow-xs space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-xs font-semibold text-foreground uppercase tracking-wider text-muted-foreground">
+              Audio Routing Mode
+            </h2>
+            {/* Clean Segmented Control */}
+            <div className="grid grid-cols-3 gap-1 bg-secondary/70 p-1 rounded-lg text-xs border border-border/60">
               <button
                 type="button"
-                onClick={() => setActiveDeckTab('music')}
-                className={`text-xs font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 ${
-                  activeDeckTab === 'music'
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                onClick={() => {
+                  handleAudioSourceModeChange('dj');
+                  setActiveDeckTab('music');
+                }}
+                className={`py-1.5 px-2 rounded-md font-medium flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  audioSourceMode === 'dj'
+                    ? 'bg-background text-foreground shadow-xs font-semibold'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Music className="w-3.5 h-3.5" />
-                <span>Spotify / YouTube</span>
-                {isMusicConnected && (
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                )}
+                <Sparkles className="w-3.5 h-3.5 text-primary" />
+                <span>Hybrid Mix</span>
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  handleAudioSourceModeChange('music');
+                  if (activeDeckTab === 'mic') setActiveDeckTab('music');
+                }}
+                className={`py-1.5 px-2 rounded-md font-medium flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  audioSourceMode === 'music'
+                    ? 'bg-background text-foreground shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Music className="w-3.5 h-3.5 text-primary" />
+                <span>Media Only</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleAudioSourceModeChange('mic');
+                  setActiveDeckTab('mic');
+                }}
+                className={`py-1.5 px-2 rounded-md font-medium flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  audioSourceMode === 'mic'
+                    ? 'bg-background text-foreground shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Mic className="w-3.5 h-3.5 text-primary" />
+                <span>Voice Only</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Sub-Channel Tabs */}
+          <div className="flex items-center justify-between border-b border-border/70 pb-2">
+            <div className="flex items-center space-x-1">
+              <button
+                type="button"
+                onClick={() => setActiveDeckTab('music')}
+                className={`text-xs font-medium px-2.5 py-1.5 rounded-md transition flex items-center gap-1.5 cursor-pointer ${
+                  activeDeckTab === 'music'
+                    ? 'bg-primary/10 text-primary border border-primary/30 font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Cast className="w-3.5 h-3.5" />
+                <span>Browser Tab</span>
+                {isMusicConnected && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveDeckTab('file')}
+                className={`text-xs font-medium px-2.5 py-1.5 rounded-md transition flex items-center gap-1.5 cursor-pointer ${
+                  activeDeckTab === 'file'
+                    ? 'bg-primary/10 text-primary border border-primary/30 font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <FileAudio className="w-3.5 h-3.5" />
+                <span>Audio File</span>
+                {isPlayingFile && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                )}
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setActiveDeckTab('mic')}
-                className={`text-xs font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 ${
+                className={`text-xs font-medium px-2.5 py-1.5 rounded-md transition flex items-center gap-1.5 cursor-pointer ${
                   activeDeckTab === 'mic'
-                    ? 'bg-primary/20 text-primary border border-primary/40'
+                    ? 'bg-primary/10 text-primary border border-primary/30 font-semibold'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -1910,117 +1946,84 @@ export default function LiveVoiceStudioPage() {
               </button>
             </div>
 
-            {activeDeckTab === 'music' ? (
+            {/* Mute button for the active deck */}
+            {activeDeckTab === 'mic' ? (
               <button
                 type="button"
-                onClick={toggleMusicMute}
-                disabled={!isMusicConnected}
-                className={`p-1.5 rounded-lg border text-xs font-medium transition ${
-                  isMusicMuted
-                    ? 'bg-destructive/20 text-destructive border-destructive/30'
-                    : 'bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-40'
+                onClick={toggleMicMute}
+                className={`p-1.5 rounded-md border text-xs transition cursor-pointer ${
+                  isMicMuted
+                    ? 'bg-destructive/15 text-destructive border-destructive/30'
+                    : 'bg-secondary text-muted-foreground hover:text-foreground border-border'
                 }`}
-                title={isMusicMuted ? 'Unmute Music Bridge' : 'Mute Music Bridge'}
+                title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}
               >
-                {isMusicMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                {isMicMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
               </button>
             ) : (
               <button
                 type="button"
-                onClick={toggleMicMute}
-                className={`p-1.5 rounded-lg border text-xs font-medium transition ${
-                  isMicMuted
-                    ? 'bg-destructive/20 text-destructive border-destructive/30'
-                    : 'bg-secondary text-muted-foreground hover:text-foreground'
+                onClick={toggleMusicMute}
+                disabled={activeDeckTab === 'music' ? !isMusicConnected : !currentFileName}
+                className={`p-1.5 rounded-md border text-xs transition cursor-pointer ${
+                  isMusicMuted
+                    ? 'bg-destructive/15 text-destructive border-destructive/30'
+                    : 'bg-secondary text-muted-foreground hover:text-foreground border-border disabled:opacity-40'
                 }`}
-                title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+                title={isMusicMuted ? 'Unmute Audio Bridge' : 'Mute Audio Bridge'}
               >
-                {isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                {isMusicMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
               </button>
             )}
           </div>
 
-          {/* DECK A: SPOTIFY & YOUTUBE MUSIC AUDIO BRIDGE */}
-          {activeDeckTab === 'music' ? (
+          {/* CHANNEL 1: BROWSER TAB (SPOTIFY / YOUTUBE) */}
+          {activeDeckTab === 'music' && (
             <div className="space-y-4">
-              {/* Main Connect Action */}
               {!isMusicConnected ? (
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <button
-                      type="button"
-                      onClick={handleConnectMusicCapture}
-                      className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/25 transition flex items-center justify-center gap-2 group cursor-pointer"
-                    >
-                      <Cast className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                      <span>Connect Spotify / YouTube Audio</span>
-                    </button>
-                    <p className="text-[11px] text-muted-foreground text-center">
-                      Captures live audio from Spotify, YouTube, YouTube Music, or any browser tab.
-                    </p>
+                <div className="p-4 rounded-xl bg-secondary/30 border border-border/80 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-lg bg-primary/10 border border-primary/20 text-primary shrink-0">
+                      <Cast className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-semibold text-foreground">Browser Tab Audio Bridge</h3>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                        Capture audio directly from Spotify, YouTube, or any active browser tab.
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Browser Tab Capture Instructions */}
-                  <div className="bg-background/60 border border-border/80 rounded-xl p-2.5 space-y-1.5 text-[11px]">
-                    <div className="font-semibold text-foreground flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>How to Stream YouTube & Spotify Live:</span>
-                    </div>
-                    <ol className="list-decimal list-inside text-muted-foreground space-y-0.5 leading-relaxed text-[10px]">
-                      <li>Open <strong className="text-foreground">YouTube</strong> or <strong className="text-foreground">Spotify</strong> in a browser tab.</li>
-                      <li>Click <strong className="text-emerald-400">"Connect Spotify / YouTube Audio"</strong> above.</li>
-                      <li>In the browser popup, choose the <strong className="text-foreground">"Chrome Tab"</strong> tab.</li>
-                      <li>Ensure <strong className="text-foreground">"Also share tab audio"</strong> is checked!</li>
-                    </ol>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleConnectMusicCapture}
+                    className="w-full py-2.5 px-3 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Cast className="w-3.5 h-3.5" />
+                    <span>Connect Browser Audio</span>
+                  </button>
 
-                  {/* Instant Bot Sound Verification */}
-                  <div className="pt-2 border-t border-border/60 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-foreground flex items-center gap-1.5">
-                        <Radio className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
-                        <span>Instant Bot Sound Verification</span>
-                      </span>
-                      {isPlayingTestChime && (
-                        <span className="text-[10px] text-emerald-400 font-mono animate-pulse">● Sound Playing</span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleToggleTestChime}
-                      className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border transition shadow-md cursor-pointer ${
-                        isPlayingTestChime
-                          ? 'bg-destructive/20 text-destructive border-destructive/40 hover:bg-destructive/30'
-                          : 'bg-gradient-to-r from-purple-600/30 via-indigo-600/30 to-purple-500/30 text-purple-200 border-purple-500/40 hover:border-purple-400'
-                      }`}
-                    >
-                      {isPlayingTestChime ? (
-                        <>
-                          <VolumeX className="w-4 h-4" />
-                          <span>Stop Test Melody</span>
-                        </>
-                      ) : (
-                        <>
-                          <Volume2 className="w-4 h-4 text-purple-300" />
-                          <span>▶ Play Test Melody (Verify Bot Sound Now)</span>
-                        </>
-                      )}
-                    </button>
-                    <p className="text-[10px] text-muted-foreground text-center">
-                      Streams a harmonic chime directly through all 15 bots to immediately verify Discord voice output.
-                    </p>
-                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-normal border-t border-border/50 pt-2 text-center">
+                    Select <strong>Chrome Tab</strong> and ensure <strong>&quot;Also share tab audio&quot;</strong> is checked.
+                  </p>
                 </div>
               ) : (
-                <div className="flex items-center space-x-2">
-                  <div className="flex-1 px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs font-semibold flex items-center gap-2 truncate">
+                <div className="p-3 rounded-lg bg-secondary/40 border border-border flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 truncate">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                    <span className="truncate">{musicSourceName}</span>
+                    <div className="truncate">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+                        Connected Audio Stream
+                      </div>
+                      <div className="text-xs font-semibold text-foreground truncate">
+                        {musicSourceName || 'Active Browser Tab'}
+                      </div>
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={handleDisconnectMusicCapture}
-                    className="px-3 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-xs font-semibold border border-border transition"
+                    className="px-2.5 py-1.5 rounded-md bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-xs font-medium border border-border transition shrink-0 cursor-pointer"
                   >
                     Disconnect
                   </button>
@@ -2029,50 +2032,41 @@ export default function LiveVoiceStudioPage() {
 
               {/* Error Notice */}
               {musicError && (
-                <div className="p-3 rounded-lg bg-destructive/15 border border-destructive/30 text-[11px] text-destructive space-y-1">
-                  <div className="font-bold flex items-center gap-1.5">
+                <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-[11px] text-destructive space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5" />
-                    <span>Audio Sharing Notice</span>
+                    <span>Audio Bridge Notice</span>
                   </div>
                   <div>{musicError}</div>
                 </div>
               )}
 
               {/* Music VU Meter */}
-              <div>
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-medium text-muted-foreground flex items-center gap-1">
-                    <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Music Audio Activity</span>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-muted-foreground flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-primary" />
+                    <span>Signal Activity</span>
                   </span>
                   <span className="font-mono text-[11px] text-foreground">{musicVuLevel}%</span>
                 </div>
-                <div className="h-3 w-full bg-secondary/80 rounded-full overflow-hidden p-0.5 border border-border">
+                <div className="h-2 w-full bg-secondary/80 rounded-full overflow-hidden p-0.5 border border-border/60">
                   <div
                     className={`h-full rounded-full transition-all duration-75 ${
                       musicVuLevel > 80
-                        ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-red-500'
-                        : musicVuLevel > 40
-                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                        : 'bg-emerald-500'
+                        ? 'bg-amber-400'
+                        : 'bg-primary'
                     }`}
                     style={{ width: `${isMusicConnected ? musicVuLevel : 0}%` }}
                   />
                 </div>
               </div>
 
-              {/* Music Pre-Amp Booster Slider (0% - 10000% volume) */}
-              <div className="space-y-1.5">
+              {/* Music Pre-Amp Booster Slider */}
+              <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-muted-foreground flex items-center gap-1">
-                    <span>Music Pre-Amp Booster</span>
-                    {musicGain >= 99.9 && (
-                      <span className="text-[9px] bg-red-600/30 text-red-400 font-bold px-1 rounded border border-red-500/40">
-                        10000% NUKE
-                      </span>
-                    )}
-                  </span>
-                  <span className="font-mono text-[11px] font-bold text-foreground">
+                  <span className="font-medium text-muted-foreground">Pre-Amp Booster</span>
+                  <span className="font-mono text-xs font-semibold text-foreground">
                     {Math.round(musicGain * 100)}%
                   </span>
                 </div>
@@ -2083,274 +2077,267 @@ export default function LiveVoiceStudioPage() {
                   step="0.5"
                   value={musicGain}
                   onChange={(e) => handleSetMusicGain(parseFloat(e.target.value))}
-                  className="w-full accent-emerald-500 cursor-pointer"
+                  className="w-full accent-primary cursor-pointer h-1.5 bg-secondary rounded-lg"
                 />
-                <div className="flex items-center space-x-1 text-[10px] overflow-x-auto pb-0.5">
+                <div className="flex items-center gap-1 text-[11px] overflow-x-auto pb-0.5">
+                  <span className="text-muted-foreground text-[10px] mr-0.5">Presets:</span>
+                  {[
+                    { label: '100%', val: 1.0 },
+                    { label: '200%', val: 2.0 },
+                    { label: '500%', val: 5.0 },
+                    { label: '1000%', val: 10.0 },
+                    { label: '10000%', val: 100.0 },
+                  ].map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => handleSetMusicGain(p.val)}
+                      className={`px-2 py-0.5 rounded border transition cursor-pointer ${
+                        Math.round(musicGain * 100) === Math.round(p.val * 100)
+                          ? 'bg-primary text-primary-foreground font-semibold border-primary'
+                          : 'bg-secondary/70 text-muted-foreground border-border hover:text-foreground'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Studio Test Tone Diagnostic */}
+              <div className="pt-2 border-t border-border/50 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-foreground block">
+                      Output Diagnostic Tone
+                    </span>
+                    <span className="text-[10px] text-muted-foreground block">
+                      Verify Discord voice connectivity with a calibrated tone.
+                    </span>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => handleSetMusicGain(1.0)}
-                    className={`px-1.5 py-0.5 rounded border transition ${
-                      Math.round(musicGain * 100) === 100
-                        ? 'bg-emerald-600 text-white font-bold border-emerald-500'
-                        : 'bg-secondary text-muted-foreground hover:text-foreground'
+                    onClick={handleToggleTestChime}
+                    className={`px-2.5 py-1.5 rounded-md font-medium text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+                      isPlayingTestChime
+                        ? 'bg-destructive/15 text-destructive border-destructive/30 hover:bg-destructive/25'
+                        : 'bg-secondary text-foreground border-border hover:bg-secondary/80'
                     }`}
                   >
-                    100%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetMusicGain(2.0)}
-                    className={`px-1.5 py-0.5 rounded border transition ${
-                      Math.round(musicGain * 100) === 200
-                        ? 'bg-emerald-600 text-white font-bold border-emerald-500'
-                        : 'bg-secondary text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    200%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetMusicGain(5.0)}
-                    className={`px-1.5 py-0.5 rounded border transition ${
-                      Math.round(musicGain * 100) === 500
-                        ? 'bg-emerald-600 text-white font-bold border-emerald-500'
-                        : 'bg-secondary text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    500%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetMusicGain(10.0)}
-                    className={`px-1.5 py-0.5 rounded border transition font-bold ${
-                      Math.round(musicGain * 100) === 1000
-                        ? 'bg-orange-600 text-white border-orange-500'
-                        : 'bg-secondary text-orange-400 hover:text-orange-300'
-                    }`}
-                  >
-                    1000%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetMusicGain(100.0)}
-                    className={`px-1.5 py-0.5 rounded border transition font-bold ${
-                      Math.round(musicGain * 100) === 10000
-                        ? 'bg-red-600 text-white border-red-500 shadow-sm shadow-red-500/50 animate-pulse'
-                        : 'bg-secondary text-red-400 border-red-500/40 hover:text-red-300'
-                    }`}
-                  >
-                    10000% MAX
+                    {isPlayingTestChime ? (
+                      <>
+                        <VolumeX className="w-3.5 h-3.5" />
+                        <span>Stop Tone</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="w-3.5 h-3.5 text-primary" />
+                        <span>Test Tone</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
 
-              {/* Quick Launch Streaming Sites */}
-              <div className="space-y-1.5 pt-2 border-t border-border/40 text-[11px]">
-                <span className="text-muted-foreground font-medium block">
-                  Quick Open &amp; Bridge:
+              {/* Quick Launch Links */}
+              <div className="pt-2 border-t border-border/50 space-y-1.5">
+                <span className="text-[11px] font-medium text-muted-foreground block">
+                  Quick Launch Media:
                 </span>
                 <div className="grid grid-cols-3 gap-1.5">
-                  <a
-                    href="https://music.youtube.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-2 py-1.5 rounded-lg bg-secondary/80 hover:bg-secondary border border-border flex items-center justify-center gap-1 text-[11px] font-semibold text-foreground transition"
-                  >
-                    <span>YT Music</span>
-                    <ExternalLink className="w-3 h-3 text-muted-foreground" />
-                  </a>
                   <a
                     href="https://open.spotify.com"
                     target="_blank"
                     rel="noreferrer"
-                    className="px-2 py-1.5 rounded-lg bg-secondary/80 hover:bg-secondary border border-border flex items-center justify-center gap-1 text-[11px] font-semibold text-emerald-400 transition"
+                    className="px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary border border-border flex items-center justify-center gap-1 text-[11px] font-medium text-foreground transition"
                   >
                     <span>Spotify</span>
+                    <ExternalLink className="w-3 h-3 text-muted-foreground" />
+                  </a>
+                  <a
+                    href="https://music.youtube.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary border border-border flex items-center justify-center gap-1 text-[11px] font-medium text-foreground transition"
+                  >
+                    <span>YT Music</span>
                     <ExternalLink className="w-3 h-3 text-muted-foreground" />
                   </a>
                   <a
                     href="https://www.youtube.com"
                     target="_blank"
                     rel="noreferrer"
-                    className="px-2 py-1.5 rounded-lg bg-secondary/80 hover:bg-secondary border border-border flex items-center justify-center gap-1 text-[11px] font-semibold text-red-400 transition"
+                    className="px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary border border-border flex items-center justify-center gap-1 text-[11px] font-medium text-foreground transition"
                   >
                     <span>YouTube</span>
                     <ExternalLink className="w-3 h-3 text-muted-foreground" />
                   </a>
                 </div>
-                <p className="text-[10px] text-muted-foreground leading-tight pt-1">
-                  Tip: In the screen share prompt, choose <strong>Chrome Tab</strong> &gt; select your tab &gt; ensure <strong>&quot;Also share tab audio&quot;</strong> is checked.
-                </p>
               </div>
+            </div>
+          )}
 
-              {/* Local MP3 / WAV Player Sub-Card (100% Muted in Browser, Direct to Bots) */}
-              <div className="p-3 rounded-lg bg-secondary/40 border border-border space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-foreground text-xs flex items-center gap-1.5">
-                    <FileAudio className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Local Audio File Player</span>
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                      Muted in Web • Direct to Bots
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="text-[10px] px-2.5 py-1 rounded-md bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition shadow-sm"
-                    >
-                      {currentFileName ? 'Replace File' : 'Choose Audio File'}
-                    </button>
-                  </div>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    accept="audio/*"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
+          {/* CHANNEL 2: LOCAL AUDIO FILE PLAYER */}
+          {activeDeckTab === 'file' && (
+            <div className="space-y-4">
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="audio/*"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+
+              {isFileLoading ? (
+                <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground bg-secondary/30 rounded-xl border border-border">
+                  <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                  <span>Decoding audio buffer into memory...</span>
                 </div>
-
-                {isFileLoading ? (
-                  <div className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground bg-background/50 rounded-lg border border-border">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
-                    <span>Decoding audio file into memory...</span>
-                  </div>
-                ) : currentFileName ? (
-                  <div className="space-y-2.5 bg-background/80 p-2.5 rounded-lg border border-border text-xs">
-                    {/* Track info header */}
-                    <div className="flex items-center justify-between">
-                      <span className="truncate max-w-[220px] font-mono text-[11px] font-semibold text-foreground">
+              ) : currentFileName ? (
+                <div className="p-4 rounded-xl bg-secondary/30 border border-border space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="truncate max-w-[200px]">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
+                        Loaded Audio Track
+                      </span>
+                      <span className="text-xs font-semibold text-foreground truncate block">
                         {currentFileName}
                       </span>
-                      <span className="font-mono text-[11px] text-muted-foreground">
-                        <strong className="text-foreground">{formatAudioTime(fileCurrentTime)}</strong>
-                        <span className="mx-1">/</span>
-                        <span>{formatAudioTime(fileDuration)}</span>
-                      </span>
+                    </div>
+                    <span className="font-mono text-xs text-muted-foreground shrink-0">
+                      <strong className="text-foreground">{formatAudioTime(fileCurrentTime)}</strong>
+                      <span className="mx-1">/</span>
+                      <span>{formatAudioTime(fileDuration)}</span>
+                    </span>
+                  </div>
+
+                  {/* Scrubber slider */}
+                  <div className="space-y-1">
+                    <input
+                      type="range"
+                      min="0"
+                      max={fileDuration || 100}
+                      step="0.1"
+                      value={fileCurrentTime}
+                      onChange={(e) => handleSeekFile(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-secondary rounded-lg accent-primary cursor-pointer"
+                      title={`Position: ${formatAudioTime(fileCurrentTime)}`}
+                    />
+                  </div>
+
+                  {/* Transport Actions */}
+                  <div className="flex items-center justify-between pt-1 border-t border-border/50">
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={handleTogglePlayFile}
+                        className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium text-xs transition cursor-pointer ${
+                          isPlayingFile
+                            ? 'bg-secondary text-foreground border border-border hover:bg-secondary/80'
+                            : 'bg-primary hover:bg-primary/90 text-primary-foreground'
+                        }`}
+                      >
+                        {isPlayingFile ? (
+                          <>
+                            <Pause className="w-3.5 h-3.5 fill-current" />
+                            <span>Pause</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                            <span>Play to Bots</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleToggleFileLoop}
+                        className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-md text-xs font-medium border transition cursor-pointer ${
+                          isFileLooping
+                            ? 'bg-primary/10 text-primary border-primary/30'
+                            : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
+                        }`}
+                        title={isFileLooping ? 'Looping Active' : 'Looping Disabled'}
+                      >
+                        <Repeat className="w-3.5 h-3.5" />
+                        <span>Loop</span>
+                      </button>
                     </div>
 
-                    {/* Seek Slider (Progress Scrubber) */}
-                    <div className="space-y-1">
-                      <input
-                        type="range"
-                        min="0"
-                        max={fileDuration || 100}
-                        step="0.1"
-                        value={fileCurrentTime}
-                        onChange={(e) => handleSeekFile(parseFloat(e.target.value))}
-                        className="w-full h-1.5 bg-secondary rounded-lg accent-purple-500 cursor-pointer"
-                        title={`Seek: ${formatAudioTime(fileCurrentTime)}`}
-                      />
-                    </div>
-
-                    {/* Playback Action Buttons: Play/Pause, Loop, Delete */}
-                    <div className="flex items-center justify-between pt-1 border-t border-border/40">
-                      <div className="flex items-center space-x-2">
-                        {/* Play / Pause Toggle Button */}
-                        <button
-                          type="button"
-                          onClick={handleTogglePlayFile}
-                          className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-bold text-xs transition shadow-sm ${
-                            isPlayingFile
-                              ? 'bg-amber-500 hover:bg-amber-400 text-black'
-                              : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                          }`}
-                          title={isPlayingFile ? 'Pause Track' : 'Play to Discord Bots'}
-                        >
-                          {isPlayingFile ? (
-                            <>
-                              <Pause className="w-3.5 h-3.5 fill-current" />
-                              <span>Pause</span>
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                              <span>Play to Bots</span>
-                            </>
-                          )}
-                        </button>
-
-                        {/* Loop Toggle Button */}
-                        <button
-                          type="button"
-                          onClick={handleToggleFileLoop}
-                          className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-md text-xs font-semibold border transition ${
-                            isFileLooping
-                              ? 'bg-purple-600/20 text-purple-300 border-purple-500/40 shadow-sm'
-                              : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
-                          }`}
-                          title={isFileLooping ? 'Looping Enabled (Click to Disable)' : 'Looping Disabled (Click to Enable)'}
-                        >
-                          <Repeat className="w-3.5 h-3.5" />
-                          <span>{isFileLooping ? 'Loop: ON' : 'Loop: OFF'}</span>
-                        </button>
-                      </div>
-
-                      {/* Delete File Button */}
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 transition"
+                      >
+                        Replace
+                      </button>
                       <button
                         type="button"
                         onClick={handleDeleteFile}
-                        className="flex items-center space-x-1 px-2.5 py-1.5 rounded-md text-xs font-semibold bg-destructive/10 text-destructive border border-destructive/30 hover:bg-destructive/20 transition"
-                        title="Delete loaded file and reset"
+                        className="text-xs text-destructive hover:bg-destructive/10 p-1.5 rounded-md transition"
+                        title="Remove audio track"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete</span>
                       </button>
                     </div>
                   </div>
-                ) : (
-                  <div className="text-[11px] text-muted-foreground bg-background/30 p-2.5 rounded-lg border border-dashed border-border flex items-center justify-between">
-                    <span>Upload an MP3, WAV, or audio file to stream strictly to Discord bots.</span>
+                </div>
+              ) : (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-6 text-center border border-dashed border-border/80 hover:border-primary/50 bg-secondary/20 hover:bg-secondary/40 rounded-xl cursor-pointer transition space-y-2"
+                >
+                  <FileAudio className="w-6 h-6 text-muted-foreground mx-auto" />
+                  <div className="text-xs font-semibold text-foreground">Upload Audio File</div>
+                  <p className="text-[11px] text-muted-foreground max-w-[240px] mx-auto">
+                    Select an MP3, WAV, or AAC file to stream directly to Discord voice channels.
+                  </p>
+                </div>
+              )}
+
+              {/* Direct Stream Action */}
+              {(currentFileName || isMusicConnected) && (
+                <div className="pt-1">
+                  {sessionState === 'connecting' ? (
+                    <div className="py-2 px-3 rounded-lg bg-secondary border border-border text-xs text-muted-foreground flex items-center justify-center gap-2">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                      <span>Connecting All Bots to Voice Channel...</span>
+                    </div>
+                  ) : sessionState !== 'streaming' ? (
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="text-[10px] font-semibold text-primary hover:underline ml-2 shrink-0"
+                      onClick={handleStartSession}
+                      disabled={sessionState === 'stopping'}
+                      className="w-full py-2 px-3 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
                     >
-                      Browse...
+                      <Radio className="w-3.5 h-3.5" />
+                      <span>Start Streaming File to All Bots</span>
                     </button>
-                  </div>
-                )}
-
-                {/* Instant Discord Bot Streaming Action & Status */}
-                {(currentFileName || isMusicConnected) && (
-                  <div className="pt-1">
-                    {sessionState === 'connecting' ? (
-                      <div className="py-2 px-3 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center justify-center gap-2">
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                        <span>Connecting All Fleet Bots to Voice Channel...</span>
-                      </div>
-                    ) : sessionState !== 'streaming' ? (
-                      <button
-                        type="button"
-                        onClick={handleStartSession}
-                        disabled={sessionState === 'stopping'}
-                        className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-purple-600/20 cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Radio className="w-3.5 h-3.5 animate-pulse" />
-                        <span>Stream Audio to All Discord Bots Now</span>
-                      </button>
-                    ) : (
-                      <div className="py-1.5 px-2.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[11px] font-semibold flex items-center justify-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                        <span>Live on Discord: Streaming through all bots ({Math.round(masterGain * 100)}% vol)</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <div className="py-2 px-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium flex items-center justify-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Broadcasting live to all bots</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          ) : (
-            /* DECK B: MICROPHONE & VOICE INGEST */
+          )}
+
+          {/* CHANNEL 3: MICROPHONE & VOICE INGEST */}
+          {activeDeckTab === 'mic' && (
             <div className="space-y-4">
-              {/* Device Selector */}
               <div>
-                <label className="block text-xs font-medium text-foreground mb-1">Microphone Input</label>
+                <label className="block text-xs font-medium text-foreground mb-1">
+                  Input Hardware Device
+                </label>
                 <select
                   value={selectedDeviceId}
                   onChange={(e) => setSelectedDeviceId(e.target.value)}
                   disabled={sessionState === 'streaming'}
-                  className="w-full bg-secondary/60 border border-border rounded-lg text-xs px-3 py-2 text-foreground outline-none disabled:opacity-50"
+                  className="w-full bg-secondary/80 border border-border rounded-lg text-xs px-3 py-2 text-foreground outline-none disabled:opacity-50"
                 >
                   {audioDevices.length === 0 ? (
                     <option value="">Default Microphone</option>
@@ -2364,31 +2351,29 @@ export default function LiveVoiceStudioPage() {
                 </select>
               </div>
 
-              {/* Live Input VU Meter */}
-              <div>
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-medium text-muted-foreground">Speech Input Level</span>
+              {/* Input Level VU */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-muted-foreground">Microphone Level</span>
                   <span className="font-mono text-[11px] text-foreground">{inputVuLevel}%</span>
                 </div>
-                <div className="h-3 w-full bg-secondary/80 rounded-full overflow-hidden p-0.5 border border-border">
+                <div className="h-2 w-full bg-secondary/80 rounded-full overflow-hidden p-0.5 border border-border/60">
                   <div
                     className={`h-full rounded-full transition-all duration-75 ${
-                      inputVuLevel > 85
-                        ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-destructive'
-                        : inputVuLevel > 50
-                        ? 'bg-gradient-to-r from-emerald-500 to-amber-400'
-                        : 'bg-emerald-500'
+                      inputVuLevel > 85 ? 'bg-amber-400' : 'bg-primary'
                     }`}
                     style={{ width: `${inputVuLevel}%` }}
-                  ></div>
+                  />
                 </div>
               </div>
 
-              {/* Input Gain Slider */}
-              <div>
-                <div className="flex items-center justify-between text-xs mb-1">
+              {/* Input Gain */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
                   <span className="font-medium text-muted-foreground">Pre-Amp Input Gain</span>
-                  <span className="font-mono text-[11px] text-foreground">{Math.round(inputGain * 100)}%</span>
+                  <span className="font-mono text-xs font-semibold text-foreground">
+                    {Math.round(inputGain * 100)}%
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -2401,13 +2386,13 @@ export default function LiveVoiceStudioPage() {
                     setInputGain(val);
                     if (gainNodeRef.current) gainNodeRef.current.gain.value = val;
                   }}
-                  className="w-full accent-primary cursor-pointer"
+                  className="w-full accent-primary cursor-pointer h-1.5 bg-secondary rounded-lg"
                 />
               </div>
 
               {/* Studio Filters & Switches */}
-              <div className="space-y-2.5 pt-2 border-t border-border/40 text-xs">
-                <label className="flex items-center justify-between cursor-pointer">
+              <div className="space-y-2 pt-2 border-t border-border/50 text-xs">
+                <label className="flex items-center justify-between cursor-pointer py-0.5">
                   <span className="text-foreground">Noise Suppression</span>
                   <input
                     type="checkbox"
@@ -2417,7 +2402,7 @@ export default function LiveVoiceStudioPage() {
                   />
                 </label>
 
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-pointer py-0.5">
                   <span className="text-foreground">High-Pass Filter (80Hz Cut)</span>
                   <input
                     type="checkbox"
@@ -2427,7 +2412,7 @@ export default function LiveVoiceStudioPage() {
                   />
                 </label>
 
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-pointer py-0.5">
                   <span className="text-foreground">Dynamics Compressor</span>
                   <input
                     type="checkbox"
@@ -2437,8 +2422,8 @@ export default function LiveVoiceStudioPage() {
                   />
                 </label>
 
-                <label className="flex items-center justify-between cursor-pointer">
-                  <span className="text-foreground">Local Audio Preview Monitor</span>
+                <label className="flex items-center justify-between cursor-pointer py-0.5">
+                  <span className="text-foreground">Local Audio Monitor</span>
                   <input
                     type="checkbox"
                     checked={previewAudio}
@@ -2452,27 +2437,27 @@ export default function LiveVoiceStudioPage() {
         </div>
 
         {/* 2. FLEET CHANNEL CONNECTOR PANEL */}
-        <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between space-y-5">
+        <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 shadow-xs flex flex-col justify-between space-y-5">
           <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/70 pb-3">
               <div>
-                <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <Users className="w-4 h-4 text-primary" />
-                  <span>Fleet Voice Channel Connector</span>
+                  <span>Fleet Channel Routing</span>
                 </h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Route your microphone voice to all Discord bots connected to a single channel.
+                  Route your audio stream to all fleet bots joined to a single target voice channel.
                 </p>
               </div>
 
               {/* Routing Mode Tabs */}
-              <div className="flex bg-secondary p-1 rounded-lg text-xs">
+              <div className="flex bg-secondary/80 p-0.5 rounded-lg text-xs border border-border/60 self-start sm:self-auto">
                 <button
                   type="button"
                   onClick={() => setRoutingMode('fleet')}
-                  className={`px-3 py-1 rounded-md font-semibold transition ${
+                  className={`px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
                     routingMode === 'fleet'
-                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      ? 'bg-background text-foreground shadow-xs font-semibold'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
@@ -2481,9 +2466,9 @@ export default function LiveVoiceStudioPage() {
                 <button
                   type="button"
                   onClick={() => setRoutingMode('custom')}
-                  className={`px-3 py-1 rounded-md font-semibold transition ${
+                  className={`px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
                     routingMode === 'custom'
-                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      ? 'bg-background text-foreground shadow-xs font-semibold'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
@@ -2495,36 +2480,35 @@ export default function LiveVoiceStudioPage() {
             {/* FLEET CONNECTOR MODE */}
             {routingMode === 'fleet' ? (
               <div className="space-y-4 text-xs">
-                {/* Server & Channel Selectors */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {/* TARGET DISCORD SERVER ID */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                        <Server className="w-3.5 h-3.5 text-primary" />
-                        <span>Target Server ID (Guild ID)</span>
+                {/* Server & Channel Configuration Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {/* TARGET SERVER (GUILD) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                        <Server className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span>Target Server (Guild ID)</span>
                       </label>
 
-                      {/* Mode toggle */}
                       <div className="flex items-center space-x-1">
                         <button
                           type="button"
                           onClick={() => setGuildInputMode('manual')}
-                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                          className={`text-[10px] px-2 py-0.5 rounded transition cursor-pointer ${
                             guildInputMode === 'manual'
-                              ? 'bg-primary text-primary-foreground font-bold'
+                              ? 'bg-secondary text-foreground font-semibold border border-border'
                               : 'text-muted-foreground hover:text-foreground'
                           }`}
                         >
-                          Manual ID
+                          Manual
                         </button>
                         <button
                           type="button"
                           onClick={() => setGuildInputMode('dropdown')}
                           disabled={guildsList.length === 0}
-                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                          className={`text-[10px] px-2 py-0.5 rounded transition cursor-pointer ${
                             guildInputMode === 'dropdown'
-                              ? 'bg-primary text-primary-foreground font-bold'
+                              ? 'bg-secondary text-foreground font-semibold border border-border'
                               : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
                           }`}
                         >
@@ -2533,30 +2517,29 @@ export default function LiveVoiceStudioPage() {
                       </div>
                     </div>
 
-                    {/* MANUAL GUILD ID OR DROPDOWN */}
                     {guildInputMode === 'manual' || guildsList.length === 0 ? (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center space-x-1.5">
+                      <div className="space-y-1">
+                        <div className="relative flex items-center">
                           <input
                             type="text"
-                            placeholder="Paste Discord Server ID (e.g. 1499406517470756955)..."
+                            placeholder="Enter Discord Server ID (e.g. 1499406517470756955)..."
                             value={manualGuildId}
                             onChange={(e) => setManualGuildId(e.target.value)}
                             disabled={sessionState === 'streaming'}
-                            className="flex-1 bg-secondary/80 border border-primary/50 focus:border-primary rounded-lg px-3 py-2 text-foreground font-mono outline-none text-xs shadow-inner"
+                            className="w-full bg-secondary/60 border border-border focus:border-primary/60 rounded-lg pl-3 pr-16 py-2 text-foreground font-mono outline-none text-xs transition"
                           />
                           <button
                             type="button"
                             onClick={handlePasteGuildId}
                             disabled={sessionState === 'streaming'}
                             title="Paste Server ID from clipboard"
-                            className="px-2.5 py-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold flex items-center gap-1"
+                            className="absolute right-1 px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-[10px] font-medium border border-border/60 transition flex items-center gap-1 cursor-pointer"
                           >
-                            <Clipboard className="w-3.5 h-3.5" />
+                            <Clipboard className="w-3 h-3" />
                             <span>Paste</span>
                           </button>
                         </div>
-                        <div className="text-[11px] text-muted-foreground px-0.5">
+                        <div className="text-[10px] text-muted-foreground px-0.5">
                           Right-click server in Discord &gt; &quot;Copy Server ID&quot;
                         </div>
                       </div>
@@ -2568,7 +2551,7 @@ export default function LiveVoiceStudioPage() {
                           setManualGuildId(e.target.value);
                         }}
                         disabled={sessionState === 'streaming' || guildsList.length === 0}
-                        className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
+                        className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50 text-xs"
                       >
                         {guildsList.map((g) => (
                           <option key={g.guildId || g.id} value={g.guildId || g.id}>
@@ -2579,34 +2562,33 @@ export default function LiveVoiceStudioPage() {
                     )}
                   </div>
 
-                  {/* TARGET VOICE CHANNEL ID */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                        <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                  {/* TARGET VOICE CHANNEL */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                        <Volume2 className="w-3.5 h-3.5 text-muted-foreground" />
                         <span>Target Voice Channel ID</span>
                       </label>
 
-                      {/* Mode toggle */}
                       <div className="flex items-center space-x-1">
                         <button
                           type="button"
                           onClick={() => setChannelInputMode('manual')}
-                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                          className={`text-[10px] px-2 py-0.5 rounded transition cursor-pointer ${
                             channelInputMode === 'manual'
-                              ? 'bg-primary text-primary-foreground font-bold'
+                              ? 'bg-secondary text-foreground font-semibold border border-border'
                               : 'text-muted-foreground hover:text-foreground'
                           }`}
                         >
-                          Manual ID
+                          Manual
                         </button>
                         <button
                           type="button"
                           onClick={() => setChannelInputMode('dropdown')}
                           disabled={currentFleetVoiceChannels.length === 0}
-                          className={`text-[10px] px-1.5 py-0.5 rounded transition ${
+                          className={`text-[10px] px-2 py-0.5 rounded transition cursor-pointer ${
                             channelInputMode === 'dropdown'
-                              ? 'bg-primary text-primary-foreground font-bold'
+                              ? 'bg-secondary text-foreground font-semibold border border-border'
                               : 'text-muted-foreground hover:text-foreground disabled:opacity-40'
                           }`}
                         >
@@ -2615,50 +2597,52 @@ export default function LiveVoiceStudioPage() {
                       </div>
                     </div>
 
-                    {/* MANUAL INPUT MODE (USER REQUEST: add manually channel id and click connect) */}
                     {channelInputMode === 'manual' || currentFleetVoiceChannels.length === 0 ? (
                       <div className="space-y-1.5">
-                        <div className="flex items-center space-x-1.5">
+                        <div className="relative flex items-center">
                           <input
                             type="text"
-                            placeholder="Paste Discord Voice Channel ID (e.g. 1499406518313947284)..."
+                            placeholder="Enter Voice Channel ID (e.g. 1499406518313947284)..."
                             value={manualChannelId}
                             onChange={(e) => setManualChannelId(e.target.value)}
                             disabled={sessionState === 'streaming'}
-                            className="flex-1 bg-secondary/80 border border-emerald-500/50 focus:border-emerald-400 rounded-lg px-3 py-2 text-foreground font-mono outline-none text-xs shadow-inner"
+                            className="w-full bg-secondary/60 border border-border focus:border-primary/60 rounded-lg pl-3 pr-24 py-2 text-foreground font-mono outline-none text-xs transition"
                           />
-                          <button
-                            type="button"
-                            onClick={handlePasteChannelId}
-                            disabled={sessionState === 'streaming'}
-                            title="Paste from clipboard"
-                            className="px-2.5 py-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold flex items-center gap-1"
-                          >
-                            <Clipboard className="w-3.5 h-3.5" />
-                            <span>Paste</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleAutoDetectChannels}
-                            disabled={isDetectingChannels || sessionState === 'streaming'}
-                            title="Auto-detect all voice channels in server"
-                            className="p-2 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-primary hover:text-primary transition"
-                          >
-                            <Wand2 className={`w-3.5 h-3.5 ${isDetectingChannels ? 'animate-spin' : ''}`} />
-                          </button>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
-                          <span>Right-click voice channel in Discord &gt; &quot;Copy Channel ID&quot;</span>
-                          {detectMsg && <span className="text-emerald-400 font-semibold">{detectMsg}</span>}
+                          <div className="absolute right-1 flex items-center space-x-1">
+                            <button
+                              type="button"
+                              onClick={handlePasteChannelId}
+                              disabled={sessionState === 'streaming'}
+                              title="Paste Channel ID from clipboard"
+                              className="px-2 py-1 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-[10px] font-medium border border-border/60 transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Clipboard className="w-3 h-3" />
+                              <span>Paste</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleAutoDetectChannels}
+                              disabled={isDetectingChannels || sessionState === 'streaming'}
+                              title="Auto-detect voice channels in server"
+                              className="p-1 rounded bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground border border-border/60 transition cursor-pointer"
+                            >
+                              <Wand2 className={`w-3 h-3 ${isDetectingChannels ? 'animate-spin text-primary' : ''}`} />
+                            </button>
+                          </div>
                         </div>
 
-                        {/* Quick Channel Picker from detected/synced server */}
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground px-0.5">
+                          <span>Right-click voice channel in Discord &gt; &quot;Copy Channel ID&quot;</span>
+                          {detectMsg && <span className="text-primary font-medium">{detectMsg}</span>}
+                        </div>
+
+                        {/* Clean Quick Channel Selector */}
                         {currentFleetVoiceChannels.length > 0 && (
-                          <div className="pt-1.5 space-y-1">
+                          <div className="pt-1 space-y-1">
                             <span className="text-[10px] text-muted-foreground block font-medium">
-                              Quick Pick Channel from {currentFleetGuild?.displayName || 'Server'}:
+                              Quick Select Detected Channels:
                             </span>
-                            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-1">
+                            <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
                               {currentFleetVoiceChannels.map((ch: any) => {
                                 const chId = ch.channelId || ch.id;
                                 const isSelected = manualChannelId === chId || selectedFleetChannelId === chId;
@@ -2670,14 +2654,14 @@ export default function LiveVoiceStudioPage() {
                                       setManualChannelId(chId);
                                       setSelectedFleetChannelId(chId);
                                     }}
-                                    className={`text-[10px] px-2 py-0.5 rounded border transition flex items-center gap-1 ${
+                                    className={`text-[10px] px-2 py-1 rounded-md border transition flex items-center gap-1.5 cursor-pointer ${
                                       isSelected
-                                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold'
-                                        : 'bg-secondary/70 border-border text-foreground hover:bg-secondary'
+                                        ? 'bg-primary/10 border-primary text-primary font-medium'
+                                        : 'bg-secondary/50 border-border/70 text-muted-foreground hover:text-foreground hover:bg-secondary'
                                     }`}
                                   >
-                                    <span>🔊</span>
-                                    <span>{ch.name}</span>
+                                    <Volume2 className="w-3 h-3 opacity-70 shrink-0" />
+                                    <span className="truncate max-w-[140px]">{ch.name}</span>
                                   </button>
                                 );
                               })}
@@ -2686,16 +2670,15 @@ export default function LiveVoiceStudioPage() {
                         )}
                       </div>
                     ) : (
-                      /* DROPDOWN MODE */
                       <select
                         value={selectedFleetChannelId}
                         onChange={(e) => setSelectedFleetChannelId(e.target.value)}
                         disabled={sessionState === 'streaming' || currentFleetVoiceChannels.length === 0}
-                        className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50"
+                        className="w-full bg-secondary/60 border border-border rounded-lg px-3 py-2 text-foreground outline-none disabled:opacity-50 text-xs"
                       >
                         {currentFleetVoiceChannels.map((ch: any) => (
                           <option key={ch.id || ch.channelId} value={ch.id || ch.channelId}>
-                            🔊 {ch.name}
+                            #{ch.name}
                           </option>
                         ))}
                       </select>
@@ -2703,22 +2686,22 @@ export default function LiveVoiceStudioPage() {
                   </div>
                 </div>
 
-                {/* Fleet Bots Selector */}
-                <div className="p-3.5 rounded-lg bg-secondary/40 border border-border space-y-2.5">
+                {/* Fleet Bots Roster Card */}
+                <div className="p-4 rounded-xl bg-secondary/30 border border-border/80 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-foreground flex items-center gap-1.5">
+                    <span className="font-semibold text-foreground flex items-center gap-2">
                       <Bot className="w-3.5 h-3.5 text-primary" />
                       <span>
-                        Fleet Bots to Connect ({selectedFleetBotIds.length} of {botsList.length} Selected)
+                        Fleet Bot Roster ({selectedFleetBotIds.length} of {botsList.length} Selected)
                       </span>
                     </span>
 
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-2 text-xs">
                       <button
                         type="button"
                         onClick={handleSelectAllFleetBots}
                         disabled={sessionState === 'streaming'}
-                        className="text-[11px] text-primary hover:underline font-semibold"
+                        className="text-primary hover:underline font-medium cursor-pointer"
                       >
                         Select All
                       </button>
@@ -2727,7 +2710,7 @@ export default function LiveVoiceStudioPage() {
                         type="button"
                         onClick={handleDeselectAllFleetBots}
                         disabled={sessionState === 'streaming'}
-                        className="text-[11px] text-muted-foreground hover:text-foreground"
+                        className="text-muted-foreground hover:text-foreground cursor-pointer"
                       >
                         Deselect All
                       </button>
@@ -2735,7 +2718,7 @@ export default function LiveVoiceStudioPage() {
                   </div>
 
                   {botsList.length === 0 ? (
-                    <div className="text-muted-foreground text-[11px] py-2">
+                    <div className="text-muted-foreground text-xs py-3 text-center">
                       No ready bots available in workspace. Please register bots on the Bot Fleet page.
                     </div>
                   ) : (
@@ -2746,20 +2729,24 @@ export default function LiveVoiceStudioPage() {
                           <div
                             key={bot.id}
                             onClick={() => toggleFleetBot(bot.id)}
-                            className={`p-2.5 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
+                            className={`p-2 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between gap-2 ${
                               isSelected
-                                ? 'bg-primary/10 border-primary/50 text-foreground'
-                                : 'bg-background/60 border-border text-muted-foreground hover:bg-secondary/60'
+                                ? 'bg-primary/10 border-primary/40 text-foreground font-medium shadow-2xs'
+                                : 'bg-secondary/40 border-border/70 text-muted-foreground hover:bg-secondary/70 hover:text-foreground'
                             }`}
                           >
                             <div className="flex items-center space-x-2 truncate">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                readOnly
-                                className="rounded accent-primary w-3.5 h-3.5 shrink-0"
-                              />
-                              <span className="truncate font-medium">{bot.displayName}</span>
+                              <Bot className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span className="truncate">{bot.displayName}</span>
+                            </div>
+                            <div
+                              className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition ${
+                                isSelected
+                                  ? 'bg-primary border-primary text-primary-foreground'
+                                  : 'border-border bg-secondary/50'
+                              }`}
+                            >
+                              {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                             </div>
                           </div>
                         );
@@ -2767,27 +2754,25 @@ export default function LiveVoiceStudioPage() {
                     </div>
                   )}
 
-                  {/* Operational Status Pill */}
-                  <div className="pt-2 border-t border-border/40 text-[11px] text-muted-foreground flex items-center justify-between">
-                    <span>
-                      Target Destination:{' '}
-                      <strong className="text-foreground">{effectiveChannelDisplayName}</strong> (
-                      {currentFleetGuild?.displayName || 'Discord Server'})
+                  {/* Summary Status Strip */}
+                  <div className="pt-2 border-t border-border/50 text-[11px] text-muted-foreground flex items-center justify-between">
+                    <span className="truncate max-w-[260px]">
+                      Destination: <strong className="text-foreground">{effectiveChannelDisplayName}</strong>
                     </span>
-                    <span className="text-emerald-400 font-mono font-bold">
-                      {selectedFleetBotIds.length} bots will join simultaneously
+                    <span className="text-foreground font-medium shrink-0">
+                      {selectedFleetBotIds.length} bots ready to join
                     </span>
                   </div>
                 </div>
               </div>
             ) : (
               /* CUSTOM MATRIX MODE */
-              <div className="space-y-2 text-xs">
-                <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center justify-between">
-                  <span>Select Target Bots &amp; Voice Channels ({selectedDestinationIds.length} selected):</span>
+              <div className="space-y-3 text-xs">
+                <div className="text-xs font-medium text-muted-foreground flex items-center justify-between">
+                  <span>Target Destination Matrix ({selectedDestinationIds.length} selected):</span>
                   <button
                     onClick={loadDestinations}
-                    className="text-primary hover:underline text-[11px] flex items-center gap-1"
+                    className="text-primary hover:underline text-xs flex items-center gap-1 cursor-pointer"
                   >
                     <RefreshCw className="w-3 h-3" />
                     <span>Refresh</span>
@@ -2795,8 +2780,8 @@ export default function LiveVoiceStudioPage() {
                 </div>
 
                 {availableDestinations.length === 0 ? (
-                  <div className="p-6 text-center text-xs text-muted-foreground bg-secondary/30 rounded-lg">
-                    No voice channels found. Please switch to &quot;All Bots in Channel&quot; mode above and paste your Discord Voice Channel ID directly.
+                  <div className="p-6 text-center text-xs text-muted-foreground bg-secondary/30 rounded-xl border border-border">
+                    No voice channels discovered. Switch to &quot;All Bots in Channel&quot; mode to enter your Voice Channel ID.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
@@ -2806,23 +2791,26 @@ export default function LiveVoiceStudioPage() {
                         <div
                           key={dest.id}
                           onClick={() => toggleDestinationSelection(dest.id)}
-                          className={`p-3 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
+                          className={`p-2.5 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
                             isSelected
                               ? 'bg-primary/10 border-primary/50 text-foreground'
                               : 'bg-secondary/40 border-border text-muted-foreground hover:bg-secondary/60'
                           }`}
                         >
                           <div className="flex items-center space-x-2.5 truncate">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              readOnly
-                              className="rounded accent-primary w-4 h-4 shrink-0"
-                            />
+                            <div
+                              className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                                isSelected
+                                  ? 'bg-primary border-primary text-primary-foreground'
+                                  : 'border-border bg-secondary/50'
+                              }`}
+                            >
+                              {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                            </div>
                             <div className="truncate">
-                              <div className="font-semibold text-foreground truncate">{dest.channelName}</div>
-                              <div className="text-[11px] text-muted-foreground truncate">
-                                Bot: {dest.botName} • {dest.guildName}
+                              <div className="font-medium text-foreground truncate">{dest.channelName}</div>
+                              <div className="text-[10px] text-muted-foreground truncate">
+                                {dest.botName} • {dest.guildName}
                               </div>
                             </div>
                           </div>
@@ -2835,165 +2823,126 @@ export default function LiveVoiceStudioPage() {
             )}
           </div>
 
-          {/* MASTER CONTROLS & UNIFIED VOLUME TO 1000% (USER REQUEST: make volume to 1000 where all bots need to work same volume) */}
-          <div className="p-4 rounded-xl bg-secondary/40 border border-border flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center space-x-3.5 flex-1">
-              <button
-                onClick={() => setMasterMuted(!masterMuted)}
-                className={`p-2.5 rounded-lg border transition ${
-                  masterMuted
-                    ? 'bg-destructive/20 text-destructive border-destructive/30'
-                    : 'bg-secondary text-foreground border-border hover:bg-secondary/80'
-                }`}
-                title={masterMuted ? 'Unmute Master' : 'Mute Master'}
-              >
-                {masterMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-              </button>
-
-              <div className="flex-1 space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-foreground flex items-center gap-1.5">
-                    <span>Unified Fleet Volume (All Bots):</span>
-                    {masterGain >= 99.9 ? (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] bg-red-600/30 text-red-400 font-extrabold px-1.5 py-0.5 rounded border border-red-500/50 shadow-sm shadow-red-500/30 animate-pulse">
-                        <Flame className="w-3 h-3 fill-current text-red-400" />
-                        <span>10000% NUKE</span>
-                      </span>
-                    ) : masterGain >= 9.9 ? (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] bg-orange-500/20 text-orange-400 font-bold px-1.5 py-0.5 rounded border border-orange-500/30">
-                        <Flame className="w-3 h-3 fill-current text-orange-400" />
-                        <span>1000% ULTRA LOUD</span>
-                      </span>
-                    ) : null}
+          {/* MASTER CONTROLS & UNIFIED BROADCAST VOLUME BUS */}
+          <div className="p-4 rounded-xl bg-secondary/30 border border-border/80 space-y-3">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMasterMuted(!masterMuted)}
+                  className={`p-2 rounded-lg border transition cursor-pointer ${
+                    masterMuted
+                      ? 'bg-destructive/15 text-destructive border-destructive/30'
+                      : 'bg-secondary text-foreground border-border hover:bg-secondary/80'
+                  }`}
+                  title={masterMuted ? 'Unmute Master Output' : 'Mute Master Output'}
+                >
+                  {masterMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </button>
+                <div>
+                  <span className="font-semibold text-foreground block">
+                    Master Broadcast Gain
                   </span>
-                  <span
-                    className={`font-mono text-sm font-bold ${
-                      masterGain >= 99.9
-                        ? 'text-red-500 animate-pulse font-extrabold'
-                        : masterGain >= 9.9
-                        ? 'text-orange-400 font-bold'
-                        : 'text-emerald-400'
-                    }`}
-                  >
-                    {Math.round(masterGain * 100)}%
+                  <span className="text-[10px] text-muted-foreground block">
+                    All bots synchronize to this master output level.
                   </span>
                 </div>
+              </div>
 
-                {/* Slider up to 100.0 (10000% Volume) */}
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="0.5"
-                  value={masterGain}
-                  onChange={(e) => handleSetUnifiedGain(parseFloat(e.target.value))}
-                  className="w-full accent-emerald-500 cursor-pointer h-2 bg-secondary rounded-lg"
-                />
-
-                {/* Unified Volume Quick Preset Buttons */}
-                <div className="flex items-center space-x-1.5 pt-1 text-[11px] overflow-x-auto pb-0.5">
-                  <span className="text-muted-foreground mr-1 shrink-0">Presets:</span>
-                  <button
-                    type="button"
-                    onClick={() => handleSetUnifiedGain(1.0)}
-                    className={`px-2 py-0.5 rounded border transition shrink-0 ${
-                      Math.round(masterGain * 100) === 100
-                        ? 'bg-emerald-600 text-white font-bold border-emerald-500 shadow-sm'
-                        : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
-                    }`}
-                  >
-                    100% (Original)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetUnifiedGain(2.0)}
-                    className={`px-2 py-0.5 rounded border transition shrink-0 ${
-                      Math.round(masterGain * 100) === 200
-                        ? 'bg-primary text-primary-foreground font-bold border-primary'
-                        : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
-                    }`}
-                  >
-                    200%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetUnifiedGain(5.0)}
-                    className={`px-2 py-0.5 rounded border transition shrink-0 ${
-                      Math.round(masterGain * 100) === 500
-                        ? 'bg-primary text-primary-foreground font-bold border-primary'
-                        : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
-                    }`}
-                  >
-                    500%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetUnifiedGain(10.0)}
-                    className={`px-2.5 py-0.5 rounded border font-bold transition flex items-center gap-1 shrink-0 ${
-                      Math.round(masterGain * 100) === 1000
-                        ? 'bg-orange-600 text-white border-orange-500 shadow-sm'
-                        : 'bg-secondary text-orange-400 border-orange-500/30 hover:bg-orange-500/10'
-                    }`}
-                  >
-                    <Flame className="w-3 h-3 fill-current text-orange-400" />
-                    <span>1000%</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetUnifiedGain(100.0)}
-                    className={`px-2.5 py-0.5 rounded border font-bold transition flex items-center gap-1 shrink-0 ${
-                      Math.round(masterGain * 100) === 10000
-                        ? 'bg-red-600 text-white border-red-500 shadow-md shadow-red-500/40 animate-pulse'
-                        : 'bg-secondary text-red-400 border-red-500/40 hover:bg-red-500/10'
-                    }`}
-                  >
-                    <Flame className="w-3 h-3 fill-current text-red-400" />
-                    <span>10000% (MAX)</span>
-                  </button>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <span className="font-mono text-sm font-bold text-foreground block">
+                    {Math.round(masterGain * 100)}%
+                  </span>
+                  <span className="text-[10px] text-muted-foreground block">
+                    {masterGain >= 100
+                      ? `+${Math.round(20 * Math.log10(masterGain))} dB (Overdrive)`
+                      : masterGain > 1.0
+                      ? `+${Math.round(20 * Math.log10(masterGain))} dB`
+                      : '0 dB (Nominal)'}
+                  </span>
                 </div>
               </div>
             </div>
 
-            <div className="text-xs text-muted-foreground md:text-right border-t md:border-t-0 pt-2 md:pt-0 border-border/40 shrink-0">
-              <div>Output Format: <strong className="text-foreground">PCM 48kHz Stereo (Studio Quality)</strong></div>
-              <div>Broadcast Duration: <strong className="text-foreground font-mono">{sessionDurationSec}s</strong></div>
+            {/* Precision Master Slider */}
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="0.5"
+              value={masterGain}
+              onChange={(e) => handleSetUnifiedGain(parseFloat(e.target.value))}
+              className="w-full accent-primary cursor-pointer h-1.5 bg-secondary rounded-lg"
+            />
+
+            {/* Presets and Format Telemetry */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-border/50 text-[11px]">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                <span className="text-muted-foreground text-[10px] mr-1 shrink-0">Presets:</span>
+                {[
+                  { label: '100% (0 dB)', val: 1.0 },
+                  { label: '200% (+6 dB)', val: 2.0 },
+                  { label: '500% (+14 dB)', val: 5.0 },
+                  { label: '1000% (+20 dB)', val: 10.0 },
+                  { label: '10,000% (+40 dB)', val: 100.0 },
+                ].map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => handleSetUnifiedGain(p.val)}
+                    className={`px-2 py-0.5 rounded border transition shrink-0 cursor-pointer ${
+                      Math.round(masterGain * 100) === Math.round(p.val * 100)
+                        ? 'bg-primary text-primary-foreground font-semibold border-primary'
+                        : 'bg-secondary/70 text-muted-foreground border-border hover:text-foreground'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground shrink-0 sm:text-right">
+                <span>PCM 48kHz Stereo</span>
+                <span>•</span>
+                <span className="font-mono">{sessionDurationSec}s elapsed</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 2.5 BIG STUDIO MASTER EQUALIZER RACK (Directly shapes frequency response for all 15 bots) */}
-      <div className="bg-card/90 border border-border rounded-2xl p-4 sm:p-6 shadow-xl backdrop-blur-sm space-y-4">
+      {/* 2.5 BIG STUDIO MASTER EQUALIZER RACK (Shapes frequency response for all bots) */}
+      <div className="bg-card border border-border rounded-xl p-5 shadow-xs space-y-4">
         {/* EQ Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-border/50">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/70">
           <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl border transition shadow-sm ${
+            <div className={`p-2 rounded-lg border transition ${
               isEqEnabled
-                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
+                ? 'bg-primary/10 border-primary/30 text-primary'
                 : 'bg-secondary border-border text-muted-foreground'
             }`}>
-              <SlidersHorizontal className="w-5 h-5" />
+              <SlidersHorizontal className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-foreground tracking-tight">
+                <h2 className="text-sm font-semibold text-foreground tracking-tight">
                   10-Band Master Studio Equalizer
                 </h2>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition ${
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition ${
                   isEqEnabled
-                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    ? 'bg-primary/10 text-primary border-primary/20'
                     : 'bg-secondary text-muted-foreground border-border'
                 }`}>
-                  {isEqEnabled ? 'ACTIVE (DSP ENGAGED)' : 'BYPASSED'}
+                  {isEqEnabled ? 'Active (DSP)' : 'Bypassed'}
                 </span>
                 {activeEqPreset in EQ_PRESETS && (
-                  <span className="hidden sm:inline-flex text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-medium">
+                  <span className="hidden sm:inline-flex text-[10px] bg-secondary text-muted-foreground border border-border px-2 py-0.5 rounded-full font-medium">
                     {EQ_PRESETS[activeEqPreset].name}
                   </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Shapes live sound streamed directly to all Discord bots with zero latency (Web Audio Biquad DSP)
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Precision Biquad DSP filtering applied directly to the master broadcast stream.
               </p>
             </div>
           </div>
@@ -3003,22 +2952,22 @@ export default function LiveVoiceStudioPage() {
             <button
               type="button"
               onClick={handleToggleEq}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition ${
+              className={`px-3 py-1.5 rounded-md text-xs font-medium border flex items-center gap-1.5 transition cursor-pointer ${
                 isEqEnabled
-                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-500/20 hover:bg-emerald-500'
+                  ? 'bg-primary text-primary-foreground border-primary shadow-xs'
                   : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
               }`}
               title={isEqEnabled ? 'Bypass Equalizer' : 'Engage Equalizer'}
             >
               <Zap className={`w-3.5 h-3.5 ${isEqEnabled ? 'fill-current' : ''}`} />
-              <span>{isEqEnabled ? 'EQ Active' : 'EQ Bypassed'}</span>
+              <span>{isEqEnabled ? 'EQ Active' : 'Bypassed'}</span>
             </button>
 
             {/* Reset to Flat */}
             <button
               type="button"
               onClick={handleResetEq}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-secondary hover:bg-secondary/80 text-foreground border border-border flex items-center gap-1.5 transition"
+              className="px-3 py-1.5 rounded-md text-xs font-medium bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground border border-border flex items-center gap-1.5 transition cursor-pointer"
               title="Reset all bands to 0 dB Flat"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -3029,7 +2978,7 @@ export default function LiveVoiceStudioPage() {
             <button
               type="button"
               onClick={() => setIsEqExpanded(!isEqExpanded)}
-              className="p-1.5 rounded-lg bg-secondary text-muted-foreground hover:text-foreground border border-border transition"
+              className="p-1.5 rounded-md bg-secondary text-muted-foreground hover:text-foreground border border-border transition cursor-pointer"
               title={isEqExpanded ? 'Collapse Equalizer' : 'Expand Equalizer'}
             >
               {isEqExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -3040,17 +2989,17 @@ export default function LiveVoiceStudioPage() {
         {isEqExpanded && (
           <div className="space-y-4 pt-1">
             {/* Real-Time Frequency Response Visualizer Curve */}
-            <div className="relative rounded-xl bg-black/60 border border-border/60 p-3 overflow-hidden shadow-inner">
-              <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1.5 font-mono px-1">
-                <span>FREQUENCY RESPONSE CURVE</span>
-                <span className="flex items-center gap-3">
-                  <span className="text-emerald-400 font-bold">+12 dB</span>
+            <div className="relative rounded-xl bg-secondary/30 border border-border/80 p-3.5 overflow-hidden">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-2 font-mono px-1">
+                <span className="tracking-wider uppercase">Frequency Response Curve</span>
+                <span className="flex items-center gap-4">
+                  <span className="text-foreground font-semibold">+12 dB</span>
                   <span>0 dB</span>
-                  <span className="text-sky-400 font-bold">-12 dB</span>
+                  <span className="text-muted-foreground font-semibold">-12 dB</span>
                 </span>
               </div>
 
-              <div className="h-24 w-full relative">
+              <div className="h-28 w-full relative">
                 <svg
                   className="w-full h-full overflow-visible"
                   viewBox="0 0 1000 120"
@@ -3058,23 +3007,17 @@ export default function LiveVoiceStudioPage() {
                 >
                   <defs>
                     <linearGradient id="eqCurveGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.4" />
-                      <stop offset="50%" stopColor="#06b6d4" stopOpacity="0.15" />
-                      <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
-                    </linearGradient>
-                    <linearGradient id="eqLineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#10b981" />
-                      <stop offset="50%" stopColor="#06b6d4" />
-                      <stop offset="100%" stopColor="#8b5cf6" />
+                      <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.25" />
+                      <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="0.0" />
                     </linearGradient>
                   </defs>
 
-                  {/* Grid Lines */}
-                  <line x1="30" y1="10" x2="970" y2="10" stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
-                  <line x1="30" y1="35" x2="970" y2="35" stroke="rgba(255,255,255,0.05)" strokeDasharray="4 4" />
-                  <line x1="30" y1="60" x2="970" y2="60" stroke="rgba(255,255,255,0.2)" strokeWidth="1" />
-                  <line x1="30" y1="85" x2="970" y2="85" stroke="rgba(255,255,255,0.05)" strokeDasharray="4 4" />
-                  <line x1="30" y1="110" x2="970" y2="110" stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
+                  {/* Subtle Grid Lines */}
+                  <line x1="30" y1="10" x2="970" y2="10" stroke="hsl(var(--border))" strokeDasharray="3 3" opacity="0.6" />
+                  <line x1="30" y1="35" x2="970" y2="35" stroke="hsl(var(--border))" strokeDasharray="3 3" opacity="0.4" />
+                  <line x1="30" y1="60" x2="970" y2="60" stroke="hsl(var(--foreground))" strokeWidth="1" opacity="0.2" />
+                  <line x1="30" y1="85" x2="970" y2="85" stroke="hsl(var(--border))" strokeDasharray="3 3" opacity="0.4" />
+                  <line x1="30" y1="110" x2="970" y2="110" stroke="hsl(var(--border))" strokeDasharray="3 3" opacity="0.6" />
 
                   {/* Vertical Guide Lines */}
                   {EQ_FREQUENCIES.map((_, idx) => {
@@ -3086,12 +3029,13 @@ export default function LiveVoiceStudioPage() {
                         y1="10"
                         x2={x}
                         y2="110"
-                        stroke="rgba(255,255,255,0.04)"
+                        stroke="hsl(var(--border))"
+                        opacity="0.3"
                       />
                     );
                   })}
 
-                  {/* Shaded Area */}
+                  {/* Shaded Area and Curve Line */}
                   {(() => {
                     const pathD =
                       `M 50 ${60 - ((isEqEnabled ? eqGains[0] : 0) / 12) * 50} ` +
@@ -3117,15 +3061,15 @@ export default function LiveVoiceStudioPage() {
                         <path
                           d={pathD}
                           fill="none"
-                          stroke="url(#eqLineGradient)"
-                          strokeWidth="2.5"
+                          stroke="hsl(var(--primary))"
+                          strokeWidth="2"
                           strokeLinecap="round"
                         />
                       </>
                     );
                   })()}
 
-                  {/* Control Nodes */}
+                  {/* Precision Control Nodes */}
                   {eqGains.map((gain, idx) => {
                     const x = 50 + idx * 100;
                     const y = 60 - ((isEqEnabled ? gain : 0) / 12) * 50;
@@ -3134,15 +3078,11 @@ export default function LiveVoiceStudioPage() {
                         <circle
                           cx={x}
                           cy={y}
-                          r="4.5"
+                          r="4"
                           className={`${
                             isEqEnabled
-                              ? gain > 0
-                                ? 'fill-emerald-400 stroke-emerald-950'
-                                : gain < 0
-                                ? 'fill-sky-400 stroke-sky-950'
-                                : 'fill-muted-foreground stroke-background'
-                              : 'fill-muted stroke-border'
+                              ? 'fill-foreground stroke-primary'
+                              : 'fill-muted-foreground stroke-border'
                           }`}
                           strokeWidth="2"
                         />
@@ -3154,7 +3094,7 @@ export default function LiveVoiceStudioPage() {
             </div>
 
             {/* 10 Vertical Fader Channels */}
-            <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 sm:gap-2.5 bg-black/40 border border-border/50 rounded-xl p-3 sm:p-4">
+            <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 bg-secondary/20 border border-border/70 rounded-xl p-3">
               {EQ_FREQUENCIES.map((freq, idx) => {
                 const gain = eqGains[idx];
                 const label = EQ_LABELS[idx];
@@ -3163,17 +3103,15 @@ export default function LiveVoiceStudioPage() {
                 return (
                   <div
                     key={freq}
-                    className="flex flex-col items-center justify-between space-y-2 p-2 rounded-lg bg-card/40 border border-border/40 hover:border-emerald-500/40 transition group"
+                    className="flex flex-col items-center justify-between space-y-2 p-2 rounded-lg bg-card/60 border border-border/60 hover:border-border transition group"
                   >
                     {/* Gain dB Readout */}
                     <div
-                      className={`font-mono text-[11px] font-bold transition ${
+                      className={`font-mono text-[11px] transition ${
                         !isEqEnabled
                           ? 'text-muted-foreground'
-                          : gain > 0
-                          ? 'text-emerald-400'
-                          : gain < 0
-                          ? 'text-sky-400'
+                          : gain !== 0
+                          ? 'text-foreground font-semibold'
                           : 'text-muted-foreground'
                       }`}
                     >
@@ -3182,9 +3120,9 @@ export default function LiveVoiceStudioPage() {
                     </div>
 
                     {/* Vertical Slider Track Container */}
-                    <div className="relative h-36 w-full flex items-center justify-center py-1">
+                    <div className="relative h-32 w-full flex items-center justify-center py-1">
                       {/* Zero dB Center Reference Line */}
-                      <div className="absolute w-8 h-[1px] bg-white/20 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <div className="absolute w-6 h-[1px] bg-border top-1/2 -translate-y-1/2 pointer-events-none" />
 
                       <input
                         type="range"
@@ -3194,15 +3132,15 @@ export default function LiveVoiceStudioPage() {
                         value={gain}
                         disabled={!isEqEnabled}
                         onChange={(e) => handleEqBandChange(idx, parseFloat(e.target.value))}
-                        className="h-2 w-32 -rotate-90 accent-emerald-500 cursor-pointer bg-secondary rounded-lg disabled:opacity-40 transition"
+                        className="h-1.5 w-28 -rotate-90 accent-primary cursor-pointer bg-secondary rounded-lg disabled:opacity-40 transition"
                         style={{ touchAction: 'none' }}
                         title={`${label} (${bandName}): ${gain > 0 ? `+${gain}` : gain} dB`}
                       />
                     </div>
 
                     {/* Frequency & Band Name */}
-                    <div className="text-center pt-1 w-full border-t border-border/30">
-                      <div className="font-mono text-xs font-bold text-foreground group-hover:text-emerald-400 transition">
+                    <div className="text-center pt-1.5 w-full border-t border-border/40">
+                      <div className="font-mono text-[11px] font-semibold text-foreground group-hover:text-primary transition">
                         {label}
                       </div>
                       <div className="text-[9px] text-muted-foreground truncate w-full" title={bandName}>
@@ -3214,12 +3152,11 @@ export default function LiveVoiceStudioPage() {
               })}
             </div>
 
-            {/* Studio EQ Presets */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-                <span className="text-xs text-muted-foreground mr-1 shrink-0 font-medium flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Presets:</span>
+            {/* Studio EQ Presets Strip */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1 text-xs">
+              <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                <span className="text-[11px] text-muted-foreground mr-1 shrink-0 font-medium">
+                  Presets:
                 </span>
                 {Object.entries(EQ_PRESETS).map(([key, preset]) => {
                   const isActive = activeEqPreset === key;
@@ -3229,10 +3166,10 @@ export default function LiveVoiceStudioPage() {
                       type="button"
                       onClick={() => handleApplyEqPreset(key)}
                       title={preset.desc}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition shrink-0 ${
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium border transition shrink-0 cursor-pointer ${
                         isActive
-                          ? 'bg-emerald-600 text-white font-bold border-emerald-500 shadow-sm shadow-emerald-500/20'
-                          : 'bg-secondary text-muted-foreground border-border hover:text-foreground hover:bg-secondary/80'
+                          ? 'bg-primary text-primary-foreground font-semibold border-primary shadow-xs'
+                          : 'bg-secondary/70 text-muted-foreground border-border hover:text-foreground hover:bg-secondary'
                       }`}
                     >
                       {preset.name}
@@ -3241,7 +3178,7 @@ export default function LiveVoiceStudioPage() {
                 })}
               </div>
 
-              <div className="text-[11px] text-muted-foreground sm:text-right shrink-0">
+              <div className="text-[10px] text-muted-foreground sm:text-right shrink-0">
                 <span>Range: </span>
                 <strong className="text-foreground font-mono">-12 dB</strong>
                 <span> to </span>
@@ -3256,15 +3193,15 @@ export default function LiveVoiceStudioPage() {
       <div className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Layers className="w-4 h-4 text-primary" />
-              <span>Active Discord Bot Voice Outputs ({outputCards.length})</span>
+              <span>Active Discord Bot Outputs ({outputCards.length})</span>
             </h2>
             {outputCards.some((c) => c.state === 'disconnected' || c.state === 'failed') && (
               <button
                 type="button"
                 onClick={handleReconnectAllDisconnected}
-                className="text-xs px-2.5 py-1 bg-amber-500/20 text-amber-400 border border-amber-500/40 hover:bg-amber-500/30 rounded-lg font-bold flex items-center gap-1.5 transition shadow-sm animate-pulse"
+                className="text-xs px-2.5 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 rounded-md font-medium flex items-center gap-1.5 transition cursor-pointer"
                 title="Reconnect all disconnected bots to the voice channel"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -3277,47 +3214,47 @@ export default function LiveVoiceStudioPage() {
             )}
           </div>
           {sessionState === 'streaming' && (
-            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1.5 animate-pulse">
-              <Disc className="w-3.5 h-3.5 fill-current" />
+            <span className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>
-                Broadcasting {audioSourceMode === 'music' ? 'Spotify / YouTube Music' : audioSourceMode === 'dj' ? 'Voice & Music (DJ Studio)' : 'Voice'} Live at {Math.round(masterGain * 100)}% Volume
+                Streaming {audioSourceMode === 'music' ? 'Tab / Music' : audioSourceMode === 'dj' ? 'Voice & Music' : 'Voice'} at {Math.round(masterGain * 100)}% Volume
               </span>
             </span>
           )}
         </div>
 
         {outputCards.length === 0 ? (
-          <div className="p-12 text-center bg-card border border-border rounded-xl text-xs text-muted-foreground">
-            No active bots transmitting. Paste your Voice Channel ID above, select your bots, and click &quot;Stream to All Bots&quot;.
+          <div className="p-10 text-center bg-card border border-border rounded-xl text-xs text-muted-foreground">
+            No active bot channels transmitting. Set your Voice Channel ID above, select your bots, and click &quot;Stream to All Bots&quot;.
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {outputCards.map((card) => (
               <div
                 key={card.endpointId}
-                className="bg-card border border-border rounded-xl p-4 shadow-sm flex flex-col justify-between space-y-4"
+                className="bg-card border border-border rounded-xl p-4 shadow-xs flex flex-col justify-between space-y-3.5"
               >
                 <div>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                        <Bot className="w-4 h-4 text-primary" />
-                        <span>{card.botName}</span>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="truncate">
+                      <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5 truncate">
+                        <Bot className="w-3.5 h-3.5 text-primary shrink-0" />
+                        <span className="truncate">{card.botName}</span>
                       </h3>
-                      <div className="text-[11px] text-muted-foreground">
-                        Channel: <strong>{card.channelName}</strong> • {card.guildName}
+                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        #{card.channelName} • {card.guildName}
                       </div>
                     </div>
 
                     <span
-                      className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border transition ${
+                      className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full border transition shrink-0 ${
                         card.state === 'connected'
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                           : card.state === 'reconnecting'
-                          ? 'bg-amber-500/15 text-amber-400 border-amber-500/30 animate-pulse'
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                           : card.state === 'muted'
-                          ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
-                          : 'bg-destructive/10 text-destructive border-destructive/30'
+                          ? 'bg-secondary text-muted-foreground border-border'
+                          : 'bg-destructive/10 text-destructive border-destructive/20'
                       }`}
                     >
                       {card.state}
@@ -3325,24 +3262,26 @@ export default function LiveVoiceStudioPage() {
                   </div>
 
                   {/* Per-Output VU Meter */}
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between text-[11px] mb-1 text-muted-foreground">
-                      <span>Audio Output Activity</span>
+                  <div className="mt-3 space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span>Signal Activity</span>
                       <span className="font-mono">{card.vuLevel}%</span>
                     </div>
-                    <div className="h-2 w-full bg-secondary rounded-full overflow-hidden p-0.5">
+                    <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-emerald-400 rounded-full transition-all duration-75"
+                        className="h-full bg-primary rounded-full transition-all duration-75"
                         style={{ width: `${card.vuLevel}%` }}
-                      ></div>
+                      />
                     </div>
                   </div>
 
-                  {/* Per-Output Gain up to 10000% */}
-                  <div className="mt-3">
-                    <div className="flex items-center justify-between text-[11px] mb-1 text-muted-foreground">
-                      <span>Bot Output Volume</span>
-                      <span className="font-mono font-bold text-foreground">{Math.round(card.gain * 100)}%</span>
+                  {/* Per-Output Gain */}
+                  <div className="mt-2.5 space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span>Bot Gain Level</span>
+                      <span className="font-mono font-semibold text-foreground">
+                        {Math.round(card.gain * 100)}%
+                      </span>
                     </div>
                     <input
                       type="range"
@@ -3353,42 +3292,39 @@ export default function LiveVoiceStudioPage() {
                       onChange={(e) =>
                         handleOutputGainChange(card.endpointId, parseFloat(e.target.value))
                       }
-                      className="w-full accent-primary cursor-pointer"
+                      className="w-full accent-primary cursor-pointer h-1 bg-secondary rounded-lg"
                     />
                   </div>
                 </div>
 
                 {/* Per-Output Controls */}
-                <div className="pt-3 border-t border-border flex items-center justify-between gap-2">
+                <div className="pt-2.5 border-t border-border/50 flex items-center justify-between gap-2 text-xs">
                   <button
                     onClick={() => handleOutputMuteToggle(card.endpointId)}
-                    className={`flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-medium border transition ${
+                    className={`flex items-center space-x-1 px-2.5 py-1 rounded-md text-[11px] font-medium border transition cursor-pointer ${
                       card.muted
-                        ? 'bg-destructive/20 text-destructive border-destructive/30'
+                        ? 'bg-destructive/15 text-destructive border-destructive/30'
                         : 'bg-secondary text-foreground border-border hover:bg-secondary/80'
                     }`}
                   >
-                    {card.muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                    {card.muted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
                     <span>{card.muted ? 'Unmute' : 'Mute'}</span>
                   </button>
 
                   <div className="flex items-center gap-1.5">
-                    {/* Reconnect Option on each single bot */}
                     <button
                       type="button"
                       disabled={card.state === 'reconnecting'}
                       onClick={() => handleReconnectEndpoint(card.endpointId)}
-                      className={`flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-semibold border transition ${
+                      className={`flex items-center space-x-1 px-2 py-1 rounded-md text-[11px] font-medium border transition cursor-pointer ${
                         card.state === 'disconnected' || card.state === 'failed'
-                          ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 hover:bg-amber-500/30 shadow-sm animate-pulse'
-                          : card.state === 'reconnecting'
-                          ? 'bg-secondary text-muted-foreground border-border cursor-wait'
-                          : 'bg-secondary text-muted-foreground border-border hover:text-foreground hover:bg-secondary/80'
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+                          : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
                       }`}
                       title="Reconnect this bot to the voice channel"
                     >
                       <RefreshCw
-                        className={`w-3.5 h-3.5 ${
+                        className={`w-3 h-3 ${
                           card.state === 'reconnecting' ? 'animate-spin text-amber-400' : ''
                         }`}
                       />
@@ -3409,7 +3345,7 @@ export default function LiveVoiceStudioPage() {
                           prev.filter((c) => c.endpointId !== card.endpointId)
                         );
                       }}
-                      className="text-xs text-muted-foreground hover:text-destructive transition px-1.5 py-1"
+                      className="text-[11px] text-muted-foreground hover:text-destructive transition px-1.5 py-1 cursor-pointer"
                       title="Disconnect bot"
                     >
                       Disconnect

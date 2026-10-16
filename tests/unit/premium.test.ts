@@ -24,7 +24,7 @@ describe('User-Level Premium Tier & Monetization Architecture', () => {
       expect(devTier.tier).toBe('developer');
       expect(devTier.maxBots).toBeGreaterThanOrEqual(27);
       expect(devTier.maxVolume).toBe(10000);
-      expect(devTier.maxSpamCount).toBe(100);
+      expect(devTier.maxSpamCount).toBe(Infinity);
       expect(devTier.audioQuality).toBe(320);
       expect(devTier.isDeveloper).toBe(true);
       expect(devTier.isExpired).toBe(false);

@@ -22,6 +22,9 @@ import {
   UserCheck,
   Sparkles,
   Info,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 
@@ -45,6 +48,16 @@ export default function ServersPage() {
   const [joinerIndex, setJoinerIndex] = useState(0);
   const [openedBotIds, setOpenedBotIds] = useState<Record<string, boolean>>({});
   const [popupBlocked, setPopupBlocked] = useState(false);
+
+  // Server Deletion & Eviction Modal State
+  const [deletingGuild, setDeletingGuild] = useState<any | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeletingGuild, setIsDeletingGuild] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [expandedBotGuilds, setExpandedBotGuilds] = useState<Record<string, boolean>>({});
+  const [expandedChannelGuilds, setExpandedChannelGuilds] = useState<Record<string, boolean>>({});
+  const [copiedGuildId, setCopiedGuildId] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const loadData = async () => {
     if (!currentWorkspace) return;
@@ -258,6 +271,72 @@ export default function ServersPage() {
     }
   };
 
+  // Open modal to delete server connection and evict all bots
+  const handleOpenDeleteModal = (guild: any) => {
+    setDeletingGuild(guild);
+    setDeleteConfirmText('');
+    setDeleteError(null);
+  };
+
+  const handleCloseDeleteModal = () => {
+    if (isDeletingGuild) return;
+    setDeletingGuild(null);
+    setDeleteConfirmText('');
+    setDeleteError(null);
+  };
+
+  // Execute deletion: instructs all bots to leave the guild and deletes database record
+  const handleConfirmDeleteGuild = async () => {
+    if (!currentWorkspace || !deletingGuild) return;
+    if (deleteConfirmText.trim().toLowerCase() !== 'confirm') {
+      setDeleteError('Please type "confirm" to verify server deletion.');
+      return;
+    }
+
+    setIsDeletingGuild(true);
+    setDeleteError(null);
+
+    try {
+      const res = await fetch(
+        `/api/workspaces/${currentWorkspace.id}/guilds/${deletingGuild.id || deletingGuild.guildId}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error?.message || 'Failed to remove server and evict bots.');
+      }
+
+      setActionNotice({
+        type: 'success',
+        message: `Server "${deletingGuild.displayName}" was deleted. All ${json.data?.departedBots || 0} bot(s) exited the server.`,
+      });
+      setDeletingGuild(null);
+      setDeleteConfirmText('');
+      await loadData();
+      setTimeout(() => setActionNotice(null), 5000);
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete server.');
+    } finally {
+      setIsDeletingGuild(false);
+    }
+  };
+
+  const handleCopyGuildId = (guildId: string) => {
+    navigator.clipboard.writeText(guildId);
+    setCopiedGuildId(guildId);
+    setTimeout(() => setCopiedGuildId(null), 2000);
+  };
+
+  const toggleBotExpand = (guildId: string) => {
+    setExpandedBotGuilds((prev) => ({ ...prev, [guildId]: !prev[guildId] }));
+  };
+
+  const toggleChannelExpand = (guildId: string) => {
+    setExpandedChannelGuilds((prev) => ({ ...prev, [guildId]: !prev[guildId] }));
+  };
+
   const currentSequentialBot = readyBots[joinerIndex] || readyBots[0];
   const openedCount = Object.keys(openedBotIds).length;
 
@@ -288,6 +367,32 @@ export default function ServersPage() {
           <span>Connect Server</span>
         </button>
       </div>
+
+      {/* ACTION NOTICE BANNER */}
+      {actionNotice && (
+        <div
+          className={`p-3.5 rounded-xl border text-xs flex items-center justify-between transition-all shadow-sm ${
+            actionNotice.type === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+              : 'bg-destructive/10 border-destructive/30 text-destructive'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {actionNotice.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-destructive shrink-0" />
+            )}
+            <span className="font-medium">{actionNotice.message}</span>
+          </div>
+          <button
+            onClick={() => setActionNotice(null)}
+            className="text-xs text-muted-foreground hover:text-foreground font-semibold px-2 py-0.5 rounded transition"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* GUILD CONNECTION WIZARD */}
       {isWizardOpen && (
@@ -741,59 +846,123 @@ export default function ServersPage() {
       )}
 
       {/* GUILD LIST CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {guilds.length === 0 ? (
-          <div className="col-span-full p-12 text-center bg-card border border-border rounded-xl text-xs text-muted-foreground">
-            No Discord servers linked yet. Click &quot;Connect Server&quot; above to connect your bots to a Discord server.
+          <div className="col-span-full p-12 text-center bg-card border border-border/80 rounded-2xl shadow-sm text-xs text-muted-foreground flex flex-col items-center justify-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center text-muted-foreground">
+              <Server className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground text-sm">No Discord Servers Connected</p>
+              <p className="text-muted-foreground mt-1">Connect your bots to a Discord server using the button above.</p>
+            </div>
+            <button
+              onClick={() => {
+                setIsWizardOpen(true);
+                setWizardError(null);
+                setWizardSuccess(null);
+                setBulkResult(null);
+              }}
+              className="mt-2 px-3.5 py-1.5 rounded-lg bg-primary text-primary-foreground font-semibold text-xs shadow hover:bg-primary/90 transition"
+            >
+              Connect Server
+            </button>
           </div>
         ) : (
           guilds.map((guild) => {
-            const connectedBotCount = guild.bots?.length || 0;
+            const connectedBots = guild.bots || [];
+            const connectedBotCount = connectedBots.length;
             const totalWorkspaceBots = bots.length;
             const allBotsConnected = connectedBotCount >= totalWorkspaceBots && totalWorkspaceBots > 0;
+            const isBotsExpanded = !!expandedBotGuilds[guild.id];
+            const visibleBots = isBotsExpanded ? connectedBots : connectedBots.slice(0, 6);
+            const remainingBotsCount = connectedBots.length - 6;
+
+            const channels = guild.channels || [];
+            const isChannelsExpanded = !!expandedChannelGuilds[guild.id];
+            const visibleChannels = isChannelsExpanded ? channels : channels.slice(0, 6);
+            const remainingChannelsCount = channels.length - 6;
+
+            const serverInitials = (guild.displayName || 'Server')
+              .split(' ')
+              .map((w: string) => w[0])
+              .filter(Boolean)
+              .slice(0, 2)
+              .join('')
+              .toUpperCase();
 
             return (
-              <div key={guild.id} className="bg-card border border-border rounded-xl p-5 shadow-sm space-y-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center text-primary font-bold">
-                      <Server className="w-6 h-6" />
+              <div
+                key={guild.id}
+                className="bg-card border border-border/80 hover:border-border rounded-xl p-5 shadow-sm space-y-4 transition flex flex-col justify-between"
+              >
+                {/* CARD HEADER */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-xs shrink-0 select-none">
+                      {serverInitials || <Server className="w-5 h-5" />}
                     </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-foreground">{guild.displayName}</h3>
-                      <div className="text-[11px] text-muted-foreground font-mono">
-                        Guild ID: {guild.guildId}
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-semibold text-foreground truncate" title={guild.displayName}>
+                        {guild.displayName}
+                      </h3>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <code className="text-[11px] font-mono text-muted-foreground bg-secondary/80 px-1.5 py-0.5 rounded border border-border/50">
+                          {guild.guildId}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyGuildId(guild.guildId)}
+                          className="p-1 rounded text-muted-foreground hover:text-foreground transition"
+                          title="Copy Guild ID"
+                        >
+                          {copiedGuildId === guild.guildId ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </button>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-2">
+                  {/* Actions & Badges */}
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    <span
+                      className={`text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded-full border ${
+                        allBotsConnected
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                          : 'bg-amber-500/10 text-amber-400 border-amber-500/25'
+                      }`}
+                    >
+                      {connectedBotCount}/{totalWorkspaceBots} Bots
+                    </span>
+
                     <button
                       onClick={() => handleQuickSyncAllBots(guild.guildId)}
                       disabled={syncingGuildId === guild.guildId}
-                      className="px-2.5 py-1 rounded bg-secondary hover:bg-secondary/80 border border-border text-[11px] font-semibold text-foreground flex items-center gap-1 transition"
+                      className="p-1.5 rounded-lg bg-secondary hover:bg-secondary/80 border border-border text-foreground transition"
                       title="Sync all registered bots into this server"
                     >
-                      <RefreshCw className={`w-3 h-3 text-primary ${syncingGuildId === guild.guildId ? 'animate-spin' : ''}`} />
-                      <span>{syncingGuildId === guild.guildId ? 'Syncing...' : 'Sync All Bots'}</span>
+                      <RefreshCw className={`w-3.5 h-3.5 text-primary ${syncingGuildId === guild.guildId ? 'animate-spin' : ''}`} />
                     </button>
 
-                    <span
-                      className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${
-                        allBotsConnected
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                      }`}
+                    <button
+                      onClick={() => handleOpenDeleteModal(guild)}
+                      className="p-1.5 rounded-lg bg-secondary hover:bg-destructive/15 text-muted-foreground hover:text-destructive border border-border hover:border-destructive/30 transition"
+                      title="Delete server and evict all bots"
                     >
-                      {connectedBotCount} / {totalWorkspaceBots} Bots
-                    </span>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
 
-                {/* Bot Memberships in Guild */}
-                <div className="text-xs space-y-1.5 pt-2 border-t border-border/40">
+                {/* BOT FLEET MEMBERSHIPS */}
+                <div className="text-xs space-y-2 pt-3 border-t border-border/50">
                   <div className="text-muted-foreground font-medium flex items-center justify-between">
-                    <span>Installed Fleet Bots ({connectedBotCount}):</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Active Bot Fleet ({connectedBotCount})
+                    </span>
                     {!allBotsConnected && (
                       <button
                         onClick={() => {
@@ -802,49 +971,101 @@ export default function ServersPage() {
                           setWizardError(null);
                           setWizardSuccess(null);
                         }}
-                        className="text-[10px] text-amber-400 hover:underline flex items-center gap-1 font-semibold"
+                        className="text-[11px] text-amber-400 hover:underline flex items-center gap-0.5 font-medium"
                       >
-                        <span>{totalWorkspaceBots - connectedBotCount} bot(s) not yet synced — Join Now (0 Perms)</span>
+                        <span>Join {totalWorkspaceBots - connectedBotCount} missing</span>
                         <ChevronRight className="w-3 h-3" />
                       </button>
                     )}
                   </div>
+
                   <div className="flex flex-wrap gap-1.5">
-                    {guild.bots?.map((b: any) => (
-                      <span
-                        key={b.botId}
-                        className="inline-flex items-center gap-1 text-[11px] bg-secondary px-2.5 py-1 rounded-md text-foreground font-medium"
+                    {visibleBots.length === 0 ? (
+                      <span className="text-[11px] text-muted-foreground italic">No bots registered in this server yet.</span>
+                    ) : (
+                      visibleBots.map((b: any) => (
+                        <span
+                          key={b.botId}
+                          className="inline-flex items-center gap-1.5 text-[11px] bg-secondary/80 border border-border/60 px-2.5 py-1 rounded-md text-foreground font-medium"
+                        >
+                          <Bot className="w-3 h-3 text-primary" />
+                          <span>{b.name}</span>
+                        </span>
+                      ))
+                    )}
+
+                    {connectedBots.length > 6 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleBotExpand(guild.id)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/15 border border-primary/20 px-2 py-1 rounded-md transition"
                       >
-                        <Bot className="w-3.5 h-3.5 text-primary" />
-                        <span>{b.name}</span>
-                      </span>
-                    ))}
+                        {isBotsExpanded ? (
+                          <>
+                            <span>Show less</span>
+                            <ChevronUp className="w-3 h-3" />
+                          </>
+                        ) : (
+                          <>
+                            <span>+{remainingBotsCount} more</span>
+                            <ChevronDown className="w-3 h-3" />
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {/* Configured Channels */}
-                <div className="text-xs space-y-1 pt-2 border-t border-border/40">
+                {/* DISCOVERED CHANNELS */}
+                <div className="text-xs space-y-2 pt-3 border-t border-border/50">
                   <div className="text-muted-foreground font-medium flex items-center justify-between">
-                    <span>Voice &amp; Text Channels ({guild.channels?.length || 0}):</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Configured Channels ({channels.length})
+                    </span>
                   </div>
-                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-                    {guild.channels?.map((ch: any) => (
-                      <span
-                        key={ch.id}
-                        className={`text-[10px] px-2 py-0.5 rounded flex items-center gap-1 border ${
-                          ch.type === 2 || ch.type === 13
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : 'bg-secondary/80 text-muted-foreground border-border/60'
-                        }`}
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {visibleChannels.length === 0 ? (
+                      <span className="text-[11px] text-muted-foreground italic">No channels discovered yet. Click Sync to discover.</span>
+                    ) : (
+                      visibleChannels.map((ch: any) => (
+                        <span
+                          key={ch.id}
+                          className={`text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 border font-medium ${
+                            ch.type === 2 || ch.type === 13
+                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
+                              : 'bg-secondary/70 text-muted-foreground border-border/50'
+                          }`}
+                        >
+                          {ch.type === 2 || ch.type === 13 ? (
+                            <Volume2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                          ) : (
+                            <Hash className="w-3 h-3 text-primary/70 shrink-0" />
+                          )}
+                          <span className="truncate max-w-[140px]">{ch.name}</span>
+                        </span>
+                      ))
+                    )}
+
+                    {channels.length > 6 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleChannelExpand(guild.id)}
+                        className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground bg-secondary/80 border border-border/60 px-2 py-0.5 rounded-md transition"
                       >
-                        {ch.type === 2 || ch.type === 13 ? (
-                          <Volume2 className="w-3 h-3 text-emerald-400" />
+                        {isChannelsExpanded ? (
+                          <>
+                            <span>Show less</span>
+                            <ChevronUp className="w-3 h-3" />
+                          </>
                         ) : (
-                          <Hash className="w-3 h-3 text-primary" />
+                          <>
+                            <span>+{remainingChannelsCount} more</span>
+                            <ChevronDown className="w-3 h-3" />
+                          </>
                         )}
-                        <span>{ch.name}</span>
-                      </span>
-                    ))}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -852,6 +1073,89 @@ export default function ServersPage() {
           })
         )}
       </div>
+
+      {/* DELETE SERVER CONFIRMATION MODAL */}
+      {deletingGuild && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-card border border-destructive/30 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center justify-center text-destructive shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-foreground">
+                  Delete Server &amp; Evict Fleet
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Are you sure you want to remove <span className="text-foreground font-semibold">{deletingGuild.displayName}</span>?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive space-y-2">
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>Destructive Action</span>
+              </div>
+              <p className="leading-relaxed text-destructive/90">
+                All <strong>{deletingGuild.bots?.length || 0} active bots</strong> in your workspace fleet will immediately exit (<code className="font-mono bg-destructive/20 px-1 py-0.5 rounded text-[11px]">guild.leave()</code>) this Discord server.
+                Channel mappings and permissions will be permanently removed.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-foreground block">
+                To confirm deletion, type <span className="font-mono font-bold text-destructive">confirm</span> below:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder='type confirm to delete the server'
+                disabled={isDeletingGuild}
+                autoFocus
+                className="w-full px-3 py-2 rounded-lg bg-secondary border border-border focus:border-destructive focus:ring-1 focus:ring-destructive text-xs font-mono outline-none text-foreground"
+              />
+            </div>
+
+            {deleteError && (
+              <div className="p-2.5 rounded-lg bg-destructive/15 border border-destructive/30 text-xs text-destructive flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={handleCloseDeleteModal}
+                disabled={isDeletingGuild}
+                className="px-3.5 py-2 rounded-lg bg-secondary hover:bg-secondary/80 text-foreground font-semibold text-xs transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteGuild}
+                disabled={deleteConfirmText.trim().toLowerCase() !== 'confirm' || isDeletingGuild}
+                className="px-3.5 py-2 rounded-lg bg-destructive hover:bg-destructive/90 text-destructive-foreground font-semibold text-xs disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 transition shadow-sm"
+              >
+                {isDeletingGuild ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Evicting Fleet...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Server</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -27,7 +27,7 @@ export class PremiumService {
         tier: 'developer',
         maxBots: 99,
         maxVolume: 10000,
-        maxSpamCount: 100,
+        maxSpamCount: Infinity,
         audioQuality: 320,
         expiresAt: null,
         isExpired: false,
@@ -60,11 +60,11 @@ export class PremiumService {
         tier: 'developer',
         maxBots: 99,
         maxVolume: 10000,
-        maxSpamCount: 100,
+        maxSpamCount: Infinity,
         audioQuality: 320,
         expiresAt: null,
         isExpired: false,
-        isDeveloper: false,
+        isDeveloper: true,
       };
     }
 

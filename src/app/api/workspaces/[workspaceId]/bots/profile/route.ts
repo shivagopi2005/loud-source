@@ -53,10 +53,14 @@ export async function GET(
     const { workspaceId } = await params;
     await authorizeWorkspaceMember(request, workspaceId);
 
+    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
+
     const bots = await prisma.botApplication.findMany({
       where: {
         workspace_id: workspaceId,
         status: { notIn: ['removed', 'disabled'] },
+        operational_role: { not: 'oauth_redirect' },
+        application_id: { notIn: [redirectClientId, '1560261747137454161'] },
       },
       select: {
         id: true,
@@ -76,8 +80,15 @@ export async function GET(
 
     const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
 
+    const workerBots = bots.filter(
+      (b) =>
+        !FleetGatewayService.isRedirectBot(b.id) &&
+        !FleetGatewayService.isRedirectBot(b.application_id) &&
+        b.display_name !== 'Roynix Loud'
+    );
+
     return okResponse({
-      bots: bots.map((b) => ({
+      bots: workerBots.map((b) => ({
         id: b.id,
         applicationId: b.application_id,
         displayName: b.display_name,

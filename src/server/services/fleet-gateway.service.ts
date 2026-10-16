@@ -52,13 +52,17 @@ export class FleetGatewayService {
   public static isRedirectBot(identifier: Client | string | null | undefined): boolean {
     if (!identifier) return false;
 
-    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim();
-    const redirectBotId = process.env.REDIRECT_BOT_ID?.trim();
+    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
+    const redirectBotId = process.env.REDIRECT_BOT_ID?.trim() || '1560261747137454161';
+    const knownRedirectIds = ['1560261747137454161', '0f146450-9db5-45f6-bef3-34fd98e12634'];
 
     // 1. Check if passed a Discord.js Client instance
     if (typeof identifier === 'object' && 'user' in identifier) {
       const clientId = identifier.user?.id;
-      if (clientId && (clientId === redirectClientId || clientId === redirectBotId)) {
+      if (clientId && (clientId === redirectClientId || clientId === redirectBotId || knownRedirectIds.includes(clientId))) {
+        return true;
+      }
+      if (identifier.user?.username?.toLowerCase().includes('roynix')) {
         return true;
       }
       return false;
@@ -69,15 +73,14 @@ export class FleetGatewayService {
       const trimmed = identifier.trim();
       if (!trimmed) return false;
 
-      if (redirectClientId && trimmed === redirectClientId) return true;
-      if (redirectBotId && trimmed === redirectBotId) return true;
+      if (trimmed === redirectClientId || trimmed === redirectBotId || knownRedirectIds.includes(trimmed)) return true;
 
       // Check token if base64 extractable
       try {
         const firstSegment = trimmed.split('.')[0];
         if (firstSegment && firstSegment.length >= 16) {
           const decoded = Buffer.from(firstSegment, 'base64').toString('utf8');
-          if (decoded && (decoded === redirectClientId || decoded === redirectBotId)) {
+          if (decoded && (decoded === redirectClientId || decoded === redirectBotId || knownRedirectIds.includes(decoded))) {
             return true;
           }
         }
@@ -86,10 +89,15 @@ export class FleetGatewayService {
       // Check active connections map by botId or applicationId
       const conn = this.connections.get(trimmed);
       if (conn) {
-        if (redirectClientId && (conn.applicationId === redirectClientId || conn.client?.user?.id === redirectClientId)) {
-          return true;
-        }
-        if (redirectBotId && (conn.applicationId === redirectBotId || conn.client?.user?.id === redirectBotId)) {
+        if (
+          conn.applicationId === redirectClientId ||
+          conn.applicationId === redirectBotId ||
+          knownRedirectIds.includes(conn.applicationId) ||
+          conn.client?.user?.id === redirectClientId ||
+          conn.client?.user?.id === redirectBotId ||
+          (conn.client?.user?.id && knownRedirectIds.includes(conn.client.user.id)) ||
+          conn.displayName?.toLowerCase().includes('roynix')
+        ) {
           return true;
         }
       }
@@ -97,10 +105,15 @@ export class FleetGatewayService {
       // Check if any connection matches
       for (const c of this.connections.values()) {
         if (c.botId === trimmed || c.applicationId === trimmed || c.client?.user?.id === trimmed) {
-          if (redirectClientId && (c.applicationId === redirectClientId || c.client?.user?.id === redirectClientId)) {
-            return true;
-          }
-          if (redirectBotId && (c.applicationId === redirectBotId || c.client?.user?.id === redirectBotId)) {
+          if (
+            c.applicationId === redirectClientId ||
+            c.applicationId === redirectBotId ||
+            knownRedirectIds.includes(c.applicationId) ||
+            c.client?.user?.id === redirectClientId ||
+            c.client?.user?.id === redirectBotId ||
+            (c.client?.user?.id && knownRedirectIds.includes(c.client.user.id)) ||
+            c.displayName?.toLowerCase().includes('roynix')
+          ) {
             return true;
           }
         }
@@ -125,6 +138,38 @@ export class FleetGatewayService {
     return Array.from(this.connections.values())
       .map((c) => c.client)
       .filter((c): c is Client => Boolean(c));
+  }
+
+  /**
+   * Instruct all active Discord bots in the fleet to exit / leave a specific guild.
+   */
+  public static async leaveGuildAcrossFleet(guildDiscordId: string): Promise<{ departedCount: number }> {
+    const clients = this.getAllClients();
+    let departedCount = 0;
+
+    await Promise.allSettled(
+      clients.map(async (client) => {
+        try {
+          const guild =
+            client.guilds.cache.get(guildDiscordId) ||
+            (await client.guilds.fetch(guildDiscordId).catch(() => null));
+          if (guild) {
+            await guild.leave();
+            departedCount++;
+            console.log(
+              `[FleetGateway] Bot ${client.user?.tag || client.user?.id} successfully exited guild ${guildDiscordId}`
+            );
+          }
+        } catch (err: any) {
+          console.warn(
+            `[FleetGateway] Bot ${client.user?.tag || client.user?.id} failed to leave guild ${guildDiscordId}:`,
+            err?.message || err
+          );
+        }
+      })
+    );
+
+    return { departedCount };
   }
 
   /**
@@ -255,6 +300,14 @@ export class FleetGatewayService {
               data: { status: 'disconnected' },
             });
           } catch {}
+
+          const isRedirect = FleetGatewayService.isRedirectBot(client) || FleetGatewayService.isRedirectBot(botId);
+          if (isRedirect) {
+            console.log(`[FleetGateway] Roynix Loud (OAuth Redirect bot) auto-reconnecting to maintain 100% uptime...`);
+            setTimeout(() => {
+              this.ensureRedirectBotOnline().catch(() => {});
+            }, 2500);
+          }
         });
       });
 
@@ -294,8 +347,14 @@ export class FleetGatewayService {
 
   /**
    * Disconnect a single bot from Discord Gateway.
+   * Protects Roynix Loud from being disconnected unless force is explicitly requested.
    */
-  public static async disconnectBot(botId: string): Promise<void> {
+  public static async disconnectBot(botId: string, force: boolean = false): Promise<void> {
+    if (!force && this.isRedirectBot(botId)) {
+      console.log(`[FleetGateway] Bot ${botId} is Roynix Loud (OAuth Redirect) — staying always online.`);
+      return;
+    }
+
     const conn = this.connections.get(botId);
     if (conn) {
       if (conn.client) {
@@ -320,6 +379,10 @@ export class FleetGatewayService {
   public static async connectWorkspaceFleet(
     workspaceId: string
   ): Promise<{ total: number; connected: number; results: any[] }> {
+    // Keep Roynix Loud online
+    await this.ensureRedirectBotOnline();
+    this.startRedirectBotWatchdog();
+
     const bots = await prisma.botApplication.findMany({
       where: {
         workspace_id: workspaceId,
@@ -365,17 +428,111 @@ export class FleetGatewayService {
   }
 
   /**
-   * Disconnect all active bots in a workspace.
+   * Disconnect all active worker bots in a workspace.
+   * Roynix Loud is strictly excluded and remains 100% online.
    */
   public static async disconnectWorkspaceFleet(workspaceId: string): Promise<void> {
     const bots = await prisma.botApplication.findMany({
-      where: { workspace_id: workspaceId },
+      where: {
+        workspace_id: workspaceId,
+        operational_role: { not: 'oauth_redirect' },
+        application_id: { notIn: [process.env.DISCORD_CLIENT_ID?.trim() || '', '1560261747137454161'].filter(Boolean) },
+      },
       select: { id: true },
     });
 
     for (const b of bots) {
-      await this.disconnectBot(b.id);
+      if (!this.isRedirectBot(b.id)) {
+        await this.disconnectBot(b.id);
+      }
     }
+  }
+
+  private static redirectWatchdogTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * Guarantee that Roynix Loud (OAuth Redirect / Developer Bot) is ALWAYS connected and stays online.
+   * Auto-reconnects on boot, on disconnect, and runs a periodic 30-second watchdog.
+   */
+  public static async ensureRedirectBotOnline(): Promise<boolean> {
+    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
+
+    // 1. Check if already connected in Gateway
+    for (const conn of this.connections.values()) {
+      if (
+        conn.status === 'connected' &&
+        conn.client?.isReady() &&
+        (conn.applicationId === redirectClientId ||
+          conn.botId === redirectClientId ||
+          this.isRedirectBot(conn.botId) ||
+          this.isRedirectBot(conn.applicationId))
+      ) {
+        return true;
+      }
+    }
+
+    // 2. Locate Roynix Loud bot record from database
+    try {
+      const redirectBot = await prisma.botApplication.findFirst({
+        where: {
+          OR: [
+            { operational_role: 'oauth_redirect' },
+            { application_id: redirectClientId },
+            { application_id: '1560261747137454161' },
+            { display_name: 'Roynix Loud' },
+          ],
+        },
+        include: {
+          credentials: {
+            where: { status: 'active' },
+            orderBy: { credential_version: 'desc' },
+            take: 1,
+          },
+        },
+      });
+
+      let tokenToUse: string | null = null;
+      let botIdToUse: string | null = null;
+
+      if (redirectBot) {
+        botIdToUse = redirectBot.id;
+        if (redirectBot.credentials.length > 0) {
+          try {
+            tokenToUse = decryptSecret(redirectBot.credentials[0].secret_reference);
+          } catch {}
+        }
+      }
+
+      // Fallback to DISCORD_BOT_TOKEN environment variable if DB token not found
+      if (!tokenToUse && process.env.DISCORD_BOT_TOKEN) {
+        tokenToUse = process.env.DISCORD_BOT_TOKEN.trim();
+        if (!botIdToUse) {
+          botIdToUse = redirectBot?.id || '0f146450-9db5-45f6-bef3-34fd98e12634';
+        }
+      }
+
+      if (tokenToUse && botIdToUse) {
+        console.log(`[FleetGateway] Ensuring Roynix Loud (${botIdToUse}) is online in Discord Gateway...`);
+        const connected = await this.connectBot(botIdToUse, tokenToUse);
+        return connected;
+      }
+    } catch (err: any) {
+      console.warn(`[FleetGateway] ensureRedirectBotOnline error:`, err.message);
+    }
+
+    return false;
+  }
+
+  /**
+   * Start 30-second watchdog to keep Roynix Loud 100% online
+   */
+  public static startRedirectBotWatchdog(): void {
+    if (this.redirectWatchdogTimer) return;
+    this.redirectWatchdogTimer = setInterval(() => {
+      this.ensureRedirectBotOnline().catch(() => {});
+    }, 30000);
+    // Initial immediate check
+    this.ensureRedirectBotOnline().catch(() => {});
   }
 
   /**
@@ -383,6 +540,10 @@ export class FleetGatewayService {
    */
   public static async autoConnectAll(): Promise<void> {
     try {
+      // 1. Ensure Roynix Loud connects first and stays online
+      await this.ensureRedirectBotOnline();
+      this.startRedirectBotWatchdog();
+
       const bots = await prisma.botApplication.findMany({
         where: {
           status: { notIn: ['removed', 'disabled'] },

@@ -282,7 +282,11 @@ export class FleetMusicService {
 
     // 3. Connect fleet bots in this guild simultaneously up to maxBots limit
     const allBots = await prisma.botApplication.findMany({
-      where: { status: { notIn: ['removed', 'disabled'] } },
+      where: {
+        status: { notIn: ['removed', 'disabled'] },
+        operational_role: { not: 'oauth_redirect' },
+        application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
+      },
     });
 
     const botsToConnect = maxBots && maxBots > 0 ? allBots.slice(0, maxBots) : allBots;
@@ -292,6 +296,7 @@ export class FleetMusicService {
 
     await Promise.allSettled(
       botsToConnect.map(async (b) => {
+        if (FleetGatewayService.isRedirectBot(b.id) || FleetGatewayService.isRedirectBot(b.application_id)) return;
         const bClient = FleetGatewayService.getClient(b.id);
         if (!bClient) return;
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   CreditCard,
   Bot,
@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   Sparkles,
   Zap,
-  ArrowUpRight,
   Download,
   Calendar,
   Clock,
@@ -20,8 +19,9 @@ import {
   Check,
   AlertCircle,
   Receipt,
-  ChevronRight,
   ExternalLink,
+  Crown,
+  Volume2,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 
@@ -32,75 +32,93 @@ export default function UsageAndBillingPage() {
   const [licenseKey, setLicenseKey] = useState('');
   const [redeemStatus, setRedeemStatus] = useState<{ success?: boolean; message?: string } | null>(null);
   const [isRedeeming, setIsRedeeming] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
+
+  const loadUsage = useCallback(async () => {
+    if (!currentWorkspace) return;
+    try {
+      setIsLoading(true);
+      const res = await fetch(`/api/usage?workspaceId=${currentWorkspace.id}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data) setUsageData(json.data);
+      }
+    } catch (err) {
+      console.error('Failed to load usage:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentWorkspace]);
 
   useEffect(() => {
-    async function loadUsage() {
-      if (!currentWorkspace) return;
-      try {
-        setIsLoading(true);
-        const res = await fetch(`/api/usage?workspaceId=${currentWorkspace.id}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data) setUsageData(json.data);
-        }
-      } catch (err) {
-        console.error('Failed to load usage:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    }
     loadUsage();
-  }, [currentWorkspace]);
+  }, [loadUsage]);
 
   const handleRedeemKey = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!licenseKey.trim()) return;
+    const trimmed = licenseKey.trim().toUpperCase();
+    if (!trimmed) return;
 
     setIsRedeeming(true);
     setRedeemStatus(null);
 
-    // Simulate key validation or integrate with Discord Premium API
-    setTimeout(() => {
-      setIsRedeeming(false);
-      if (licenseKey.trim().toUpperCase().startsWith('LOUD-')) {
+    try {
+      const res = await fetch('/api/usage/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: trimmed,
+          workspaceId: currentWorkspace?.id,
+        }),
+      });
+
+      const json = await res.json();
+      if (res.ok && json.success) {
         setRedeemStatus({
           success: true,
-          message: 'License key redeemed successfully! Workspace quotas expanded.',
+          message: json.data?.message || 'License key redeemed successfully!',
         });
         setLicenseKey('');
+        await loadUsage();
       } else {
         setRedeemStatus({
           success: false,
-          message: 'Invalid license key. Format must be LOUD-XXXX-XXXX-XXXX.',
+          message: json.error?.message || json.message || 'Invalid or already redeemed license key code.',
         });
       }
-    }, 900);
+    } catch (err: any) {
+      setRedeemStatus({
+        success: false,
+        message: err.message || 'Failed to communicate with redemption server.',
+      });
+    } finally {
+      setIsRedeeming(false);
+    }
   };
 
-  const botCount = usageData?.currentUsage?.registeredBots || 28;
+  const botCount = usageData?.currentUsage?.registeredBots || 0;
   const botMax = usageData?.quotas?.maxBots || 100;
-  const botPercentage = Math.min(100, Math.round((botCount / botMax) * 100));
+  const botPercentage = Math.min(100, Math.round((botCount / (botMax || 1)) * 100));
 
-  const voiceHours = usageData?.currentUsage?.voiceHoursUsed || 14.8;
+  const voiceHours = usageData?.currentUsage?.voiceHoursUsed || 0;
   const maxVoiceHours = usageData?.quotas?.maxMonthlyVoiceHours || 500;
-  const voicePercentage = Math.min(100, Math.round((voiceHours / maxVoiceHours) * 100));
+  const voicePercentage = Math.min(100, Math.round((voiceHours / (maxVoiceHours || 1)) * 100));
 
-  const voiceEndpoints = usageData?.currentUsage?.activeVoiceEndpoints || 0;
   const maxEndpoints = usageData?.quotas?.maxVoiceEndpoints || 20;
 
   const currentPlan = currentWorkspace?.planId || 'enterprise';
   const isEnterprise = currentPlan.toLowerCase() === 'enterprise';
 
+  const userTier = usageData?.userTier;
+  const isDeveloper = userTier?.isDeveloper || userTier?.tier === 'developer';
+  const isUserPremium = userTier?.tier === 'premium';
+
   const plans = [
     {
       id: 'free',
       name: 'Community Free',
-      price: '$0',
-      period: 'forever',
-      description: 'Ideal for testing voice audio and small private servers.',
+      description: 'Default tier for testing voice broadcast with small server setups.',
       features: [
-        'Up to 5 Discord Bots',
+        'Up to 5 Discord Fleet Bots',
         '2 Concurrent Voice Channels',
         '10 Voice Streaming Hours / mo',
         'Standard 128kbps Opus Audio',
@@ -112,11 +130,9 @@ export default function UsageAndBillingPage() {
     {
       id: 'pro',
       name: 'Professional Studio',
-      price: '$29',
-      period: 'per month',
-      description: 'Built for active Discord creators and multi-stage broadcast servers.',
+      description: 'Built for active Discord creators and multi-stage broadcast communities.',
       features: [
-        'Up to 25 Discord Bots',
+        'Up to 25 Discord Fleet Bots',
         '10 Concurrent Voice Channels',
         '100 Voice Streaming Hours / mo',
         'High-Fidelity 320kbps Audio Pipeline',
@@ -129,11 +145,9 @@ export default function UsageAndBillingPage() {
     {
       id: 'enterprise',
       name: 'Enterprise Voice Fleet',
-      price: '$99',
-      period: 'per month',
       description: 'Production-grade infrastructure for massive fleets and 24/7 audio staging.',
       features: [
-        'Up to 100 Discord Bots',
+        'Up to 100 Discord Fleet Bots',
         '20 Concurrent Voice Channels',
         '500 Voice Streaming Hours / mo',
         'Dedicated WebSocket Media Gateway (:3001)',
@@ -156,7 +170,7 @@ export default function UsageAndBillingPage() {
             <span>Usage Quotas &amp; Subscription</span>
           </h1>
           <p className="text-xs text-muted-foreground mt-1">
-            Real-time workspace capacity telemetry, resource allocation, and billing management.
+            Real-time workspace capacity telemetry, license key redemption, and verified resource allocation.
           </p>
         </div>
 
@@ -181,11 +195,13 @@ export default function UsageAndBillingPage() {
               <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30 uppercase tracking-wide">
                 {currentPlan.toUpperCase()}
               </span>
-              <span className="text-[11px] text-muted-foreground">• Auto-renews Nov 1, 2026</span>
+              <span className="text-[11px] text-muted-foreground">
+                • {isDeveloper ? 'Developer Tier (Lifetime)' : isUserPremium ? 'Premium Activated' : 'Free Tier'}
+              </span>
             </div>
 
             <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground tracking-tight">
-              {usageData?.planName || 'Enterprise Voice Studio Tier'}
+              {usageData?.planName || 'Enterprise Voice Fleet'}
             </h2>
 
             <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl leading-relaxed">
@@ -211,19 +227,21 @@ export default function UsageAndBillingPage() {
 
           <div className="flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0">
             <div className="text-left lg:text-right">
-              <div className="text-2xl sm:text-3xl font-black text-foreground">
-                ${usageData?.billingCycle?.priceMonthly || 99}
-                <span className="text-xs font-normal text-muted-foreground"> / month</span>
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Activation Method
               </div>
-              <span className="text-[11px] text-muted-foreground">Billed via Visa ending in 4242</span>
+              <div className="text-sm font-bold text-foreground">
+                Discord License Key
+              </div>
+              <span className="text-[11px] text-emerald-400 font-medium">Verified Active</span>
             </div>
 
             <a
-              href="#plans-section"
+              href="#redeem-section"
               className="flex items-center justify-center space-x-2 px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow-lg shadow-primary/20 transition active:scale-95"
             >
-              <Sparkles className="w-4 h-4" />
-              <span>Change Plan or Quotas</span>
+              <KeyRound className="w-4 h-4" />
+              <span>Redeem License Key</span>
             </a>
           </div>
         </div>
@@ -261,7 +279,7 @@ export default function UsageAndBillingPage() {
             </div>
 
             <div className="text-[11px] text-muted-foreground flex justify-between pt-1">
-              <span>{botMax - botCount} slots available</span>
+              <span>{Math.max(0, botMax - botCount)} slots available</span>
               <span>Capacity: {botMax} bots</span>
             </div>
           </div>
@@ -316,16 +334,16 @@ export default function UsageAndBillingPage() {
             </div>
 
             <div className="text-[11px] text-muted-foreground flex justify-between pt-1">
-              <span>Billing cycle: Current month</span>
-              <span>Resets on 1st of month</span>
+              <span>Real-time voice telemetry</span>
+              <span>Reset schedule: Monthly</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 4. REDEEM LICENSE KEY & PAYMENT METHOD SECTION */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* License Key Redemption */}
+      {/* 4. REDEEM LICENSE KEY & REAL ACCOUNT TIER SECTION */}
+      <div id="redeem-section" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Real License Key Redemption Form */}
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center space-x-2">
@@ -333,7 +351,7 @@ export default function UsageAndBillingPage() {
               <h3 className="text-sm font-bold text-foreground">Redeem License Key</h3>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Purchased a license key via our Discord Store or reseller? Enter your key below to unlock extra bot slots or extended hours immediately.
+              Have a license key generated by the developer? Enter your unique key below to immediately activate your account tier and expand fleet quotas.
             </p>
           </div>
 
@@ -374,67 +392,88 @@ export default function UsageAndBillingPage() {
           </form>
 
           <div className="text-[11px] text-muted-foreground border-t border-border/50 pt-2 flex items-center justify-between">
-            <span>Keys can also be redeemed in Discord via <code className="text-primary font-mono">!redeem &lt;key&gt;</code></span>
+            <span>Keys can also be redeemed in Discord via <code className="text-primary font-mono">!premium redeem &lt;key&gt;</code></span>
             <a
               href="https://discord.gg/XA4VZMYsbP"
               target="_blank"
               rel="noreferrer"
               className="text-primary hover:underline flex items-center gap-1"
             >
-              <span>Get Support</span>
+              <span>Support Server</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
         </div>
 
-        {/* Payment Method & Billing Details */}
+        {/* Real User Account Tier & Discord Activation Details */}
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center space-x-2">
-              <CreditCard className="w-4 h-4 text-emerald-400" />
-              <h3 className="text-sm font-bold text-foreground">Payment Method &amp; Renewal</h3>
+              {isDeveloper ? (
+                <Crown className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Sparkles className="w-4 h-4 text-primary" />
+              )}
+              <h3 className="text-sm font-bold text-foreground">User Account Tier</h3>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Your subscription renews automatically every month. All invoices are issued in USD.
+              Account privileges are verified directly from the database and bound to your Discord identity.
             </p>
           </div>
 
-          <div className="p-3.5 bg-secondary/50 border border-border rounded-lg flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-7 rounded bg-[#1a1f36] border border-border flex items-center justify-center font-bold text-xs text-blue-400 italic">
-                VISA
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-foreground">Visa ending in 4242</div>
-                <div className="text-[10px] text-muted-foreground">Expires 08/2029 • Default</div>
-              </div>
+          <div className="p-4 bg-secondary/50 border border-border rounded-xl space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Account Status</span>
+              <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                {userTier?.tier?.toUpperCase() || 'FREE'} TIER
+              </span>
             </div>
 
-            <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-              Verified
-            </span>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Max Fleet Bots</span>
+              <strong className="text-foreground">{userTier?.maxBots || 5} Bots</strong>
+            </div>
+
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Audio Overdrive Volume</span>
+              <strong className="text-foreground">{userTier?.maxVolume || 200}%</strong>
+            </div>
+
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Max Blast Count</span>
+              <strong className="text-foreground">
+                {userTier?.maxSpamCount === 'infinite' || isDeveloper
+                  ? 'infinite Messages'
+                  : `${userTier?.maxSpamCount || 5} Messages`}
+              </strong>
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-border/40">
+              <span className="text-muted-foreground">Tier Expiration</span>
+              <strong className="text-primary">
+                {isDeveloper
+                  ? 'Lifetime Access (Developer)'
+                  : userTier?.expiresAt
+                  ? new Date(userTier.expiresAt).toLocaleDateString()
+                  : isUserPremium
+                  ? 'Lifetime'
+                  : 'Free Tier (No Expiration)'}
+              </strong>
+            </div>
           </div>
 
-          <div className="flex items-center justify-between pt-1 text-xs">
-            <div className="text-muted-foreground">
-              Next invoice: <strong className="text-foreground">$99.00 on Nov 1, 2026</strong>
-            </div>
-            <button
-              onClick={() => alert('Billing portal integration is active. Payment method is verified.')}
-              className="text-xs text-primary font-semibold hover:underline"
-            >
-              Update Method
-            </button>
+          <div className="text-[11px] text-muted-foreground flex items-center justify-between">
+            <span>No credit card required. Upgrades are managed via Discord.</span>
           </div>
         </div>
       </div>
 
-      {/* 5. PRICING & PLAN MATRIX */}
-      <div id="plans-section" className="space-y-4 pt-2">
+      {/* 5. PRICING & PLAN COMPARISON MATRIX */}
+      <div className="space-y-4 pt-2">
         <div>
-          <h3 className="text-base font-bold text-foreground">Available Workspace Plans</h3>
+          <h3 className="text-base font-bold text-foreground">Workspace Plan Features</h3>
           <p className="text-xs text-muted-foreground">
-            Scale your voice broadcasting capacity and bot applications according to your community size.
+            Capacity breakdown across available multi-bot voice studio tiers.
           </p>
         </div>
 
@@ -450,7 +489,7 @@ export default function UsageAndBillingPage() {
             >
               {p.popular && (
                 <div className="absolute -top-3 right-6 bg-primary text-primary-foreground text-[10px] font-extrabold uppercase px-3 py-0.5 rounded-full shadow-sm tracking-wider">
-                  Recommended
+                  Active Workspace Tier
                 </div>
               )}
 
@@ -467,12 +506,7 @@ export default function UsageAndBillingPage() {
                   <p className="text-xs text-muted-foreground mt-1 min-h-[32px]">{p.description}</p>
                 </div>
 
-                <div className="flex items-baseline space-x-1 border-b border-border/60 pb-4">
-                  <span className="text-3xl font-black text-foreground">{p.price}</span>
-                  <span className="text-xs text-muted-foreground">/{p.period}</span>
-                </div>
-
-                <ul className="space-y-2.5 text-xs text-foreground/90">
+                <ul className="space-y-2.5 text-xs text-foreground/90 border-t border-border/60 pt-4">
                   {p.features.map((feat, idx) => (
                     <li key={idx} className="flex items-start space-x-2">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
@@ -484,20 +518,17 @@ export default function UsageAndBillingPage() {
 
               <div className="pt-6">
                 {p.isCurrent ? (
-                  <button
-                    disabled
-                    className="w-full py-2.5 rounded-xl bg-secondary text-foreground/70 font-semibold text-xs border border-border cursor-default flex items-center justify-center space-x-1.5"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Active Workspace Plan</span>
-                  </button>
+                  <div className="w-full py-2.5 rounded-xl bg-secondary text-foreground/80 font-semibold text-xs border border-border flex items-center justify-center space-x-1.5 cursor-default">
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Active Workspace Tier</span>
+                  </div>
                 ) : (
-                  <button
-                    onClick={() => alert(`Upgrading to ${p.name}. Contact support or use !premium on Discord to activate.`)}
-                    className="w-full py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs shadow transition active:scale-95"
+                  <a
+                    href="#redeem-section"
+                    className="w-full py-2.5 rounded-xl bg-secondary hover:bg-secondary/80 text-foreground font-semibold text-xs border border-border transition flex items-center justify-center space-x-1.5"
                   >
-                    Switch to {p.name}
-                  </button>
+                    <span>Upgrade via License Key</span>
+                  </a>
                 )}
               </div>
             </div>
@@ -505,138 +536,60 @@ export default function UsageAndBillingPage() {
         </div>
       </div>
 
-      {/* 6. INVOICES & BILLING HISTORY TABLE */}
+      {/* 6. REAL LICENSE KEY ACTIVATION HISTORY TABLE */}
       <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden space-y-0">
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Receipt className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-bold text-foreground">Billing History &amp; Invoices</h3>
+            <h3 className="text-sm font-bold text-foreground">License Key Activation History</h3>
           </div>
-          <span className="text-xs text-muted-foreground font-medium">Automatic PDF Receipts</span>
+          <span className="text-xs text-muted-foreground font-medium">Real-Time Database Records</span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-foreground">
             <thead className="bg-secondary/40 text-muted-foreground border-b border-border">
               <tr>
-                <th className="p-3.5 font-semibold">Invoice ID</th>
-                <th className="p-3.5 font-semibold">Date</th>
-                <th className="p-3.5 font-semibold">Description</th>
-                <th className="p-3.5 font-semibold">Amount</th>
-                <th className="p-3.5 font-semibold">Status</th>
-                <th className="p-3.5 font-semibold text-right">Receipt</th>
+                <th className="p-3.5 font-semibold">License Code</th>
+                <th className="p-3.5 font-semibold">Tier</th>
+                <th className="p-3.5 font-semibold">Duration</th>
+                <th className="p-3.5 font-semibold">Redemption Date</th>
+                <th className="p-3.5 font-semibold text-right">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/30">
-              {(usageData?.invoices || [
-                {
-                  id: 'INV-2026-1001',
-                  date: '2026-10-01',
-                  description: 'Enterprise Voice Studio Subscription — Monthly Fleet Capacity (100 Bots)',
-                  amount: '$99.00',
-                  status: 'paid',
-                },
-                {
-                  id: 'INV-2026-0901',
-                  date: '2026-09-01',
-                  description: 'Enterprise Voice Studio Subscription — Monthly Fleet Capacity (100 Bots)',
-                  amount: '$99.00',
-                  status: 'paid',
-                },
-                {
-                  id: 'INV-2026-0801',
-                  date: '2026-08-01',
-                  description: 'Pro Voice Studio + Multi-Bot Fleet Expansion Pack',
-                  amount: '$49.00',
-                  status: 'paid',
-                },
-              ]).map((inv: any) => (
-                <tr key={inv.id} className="hover:bg-secondary/30 transition">
-                  <td className="p-3.5 font-mono font-semibold text-primary">{inv.id}</td>
-                  <td className="p-3.5 text-muted-foreground whitespace-nowrap">{inv.date}</td>
-                  <td className="p-3.5 font-medium">{inv.description}</td>
-                  <td className="p-3.5 font-bold text-foreground">{inv.amount}</td>
-                  <td className="p-3.5">
-                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
-                      <Check className="w-3 h-3" />
-                      <span>{inv.status}</span>
-                    </span>
-                  </td>
-                  <td className="p-3.5 text-right">
-                    <button
-                      onClick={() => setSelectedInvoice(inv)}
-                      className="text-xs bg-secondary hover:bg-secondary/80 border border-border px-2.5 py-1 rounded transition inline-flex items-center gap-1"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>Receipt</span>
-                    </button>
+              {usageData?.redemptions && usageData.redemptions.length > 0 ? (
+                usageData.redemptions.map((redemption: any) => (
+                  <tr key={redemption.id} className="hover:bg-secondary/30 transition">
+                    <td className="p-3.5 font-mono font-semibold text-primary">{redemption.code}</td>
+                    <td className="p-3.5 font-medium uppercase">{redemption.tier}</td>
+                    <td className="p-3.5 text-muted-foreground">{redemption.duration}</td>
+                    <td className="p-3.5 text-muted-foreground">{redemption.redeemedAt}</td>
+                    <td className="p-3.5 text-right">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
+                        <Check className="w-3 h-3" />
+                        <span>Active</span>
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center justify-center space-y-1">
+                      <KeyRound className="w-7 h-7 text-muted-foreground/40 mb-1" />
+                      <p className="font-semibold text-foreground">No license keys redeemed yet</p>
+                      <p className="text-xs text-muted-foreground">
+                        When you receive a key generated by the developer, enter it above or in Discord via <code className="text-primary font-mono">!premium redeem</code>.
+                      </p>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
       </div>
-
-      {/* 7. INVOICE RECEIPT MODAL */}
-      {selectedInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border rounded-xl shadow-2xl max-w-md w-full p-6 relative">
-            <div className="flex items-center justify-between border-b border-border pb-3 mb-4">
-              <div className="flex items-center space-x-2">
-                <Receipt className="w-5 h-5 text-primary" />
-                <h3 className="text-sm font-bold text-foreground">Invoice Receipt</h3>
-              </div>
-              <button
-                onClick={() => setSelectedInvoice(null)}
-                className="text-muted-foreground hover:text-foreground text-xs"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div className="flex justify-between py-1 border-b border-border/40">
-                <span className="text-muted-foreground">Invoice Number:</span>
-                <span className="font-mono font-bold text-primary">{selectedInvoice.id}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-border/40">
-                <span className="text-muted-foreground">Invoice Date:</span>
-                <span className="font-medium text-foreground">{selectedInvoice.date}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-border/40">
-                <span className="text-muted-foreground">Billing Plan:</span>
-                <span className="font-medium text-foreground">{selectedInvoice.description}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-border/40">
-                <span className="text-muted-foreground">Payment Method:</span>
-                <span className="font-medium text-foreground">Visa ending in 4242</span>
-              </div>
-              <div className="flex justify-between py-1 text-sm font-bold pt-2">
-                <span>Total Paid:</span>
-                <span className="text-emerald-400">{selectedInvoice.amount}</span>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  window.print();
-                }}
-                className="px-4 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-semibold shadow transition"
-              >
-                Print Receipt
-              </button>
-              <button
-                onClick={() => setSelectedInvoice(null)}
-                className="px-4 py-1.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-xs font-semibold border border-border transition"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -599,11 +599,11 @@ export class BotCommandService {
         const maxCount = userTier.maxSpamCount;
 
         let effectiveCount = count;
-        if (effectiveCount > maxCount) {
+        if (Number.isFinite(maxCount) && effectiveCount > maxCount) {
           effectiveCount = maxCount;
           try {
             await message.reply(
-              `ℹ️ Free Tier is limited to **.${maxCount}** DM blast count. Upgrade to **Premium** (\`!premium status\`) for up to **.50** blasts with 20 bots!`
+              `ℹ️ ${userTier.tier === 'premium' ? 'Premium' : 'Free'} Tier is limited to **.${maxCount}** DM blast count. Upgrade to **Premium** (\`!premium status\`) for up to **.50** blasts with 20 bots!`
             );
           } catch {}
         }
@@ -723,11 +723,11 @@ export class BotCommandService {
         const maxCount = userTier.maxSpamCount;
 
         let effectiveCount = count;
-        if (effectiveCount > maxCount) {
+        if (Number.isFinite(maxCount) && effectiveCount > maxCount) {
           effectiveCount = maxCount;
           try {
             await message.reply(
-              `ℹ️ Free Tier is limited to **.${maxCount}** spam blast count. Upgrade to **Premium** (\`!premium status\`) for up to **.50** blasts with 20 bots!`
+              `ℹ️ ${userTier.tier === 'premium' ? 'Premium' : 'Free'} Tier is limited to **.${maxCount}** spam blast count. Upgrade to **Premium** (\`!premium status\`) for up to **.50** blasts with 20 bots!`
             );
           } catch {}
         }
@@ -1199,7 +1199,7 @@ export class BotCommandService {
       if (cmd === 'premium') {
         const action = sub; // args[0]
         const targetArg = args[1];
-        const daysArg = args[2] || args[1];
+        const daysArg = args[2];
 
         // 1. !premium enable <@user | user_id> [days]
         if (action === 'enable') {
@@ -1260,33 +1260,76 @@ export class BotCommandService {
           return;
         }
 
-        // 3. !premium generate [days=30]
-        if (action === 'generate') {
+        // 3. !premium generate <user> [days] -> Send directly to user DM
+        if (action === 'generate' || action === 'key') {
           if (message.author.id !== DEVELOPER_ID) {
             await message.reply('⛔ Only the supreme developer can generate license keys.');
             return;
           }
 
-          const durationDays = parseInt(targetArg, 10);
+          let targetUserId: string | null = null;
+          const mentionMatch = targetArg?.match(/^<@!?(\d+)>$/);
+          if (mentionMatch) targetUserId = mentionMatch[1];
+          else if (/^\d{10,22}$/.test(targetArg || '')) targetUserId = targetArg;
+
+          if (!targetUserId) {
+            await message.reply(
+              'Usage: `!premium generate <@user | user_id> [days=30]`\n' +
+              'Example: `!premium generate @User 30` (or `!premium generate @User 0` for lifetime)'
+            );
+            return;
+          }
+
+          const durationDays = parseInt(daysArg, 10);
           const effectiveDays = isNaN(durationDays) ? 30 : durationDays;
 
           const key = await PremiumService.generateLicenseKey(DEVELOPER_ID, effectiveDays);
 
+          let dmSent = false;
           try {
-            await message.author.send(
-              `🔑 **[LICENSE KEY GENERATED]**\n` +
-              `Code: \`${key}\`\n` +
-              `Duration: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n` +
-              `Customer Instruction: Tell the buyer to type \`!premium redeem ${key}\` in Discord!`
-            );
-            await message.react('📬');
-            await message.reply('📬 License key generated and sent to your Direct Messages!');
-          } catch (dmErr) {
+            const targetUser = await client.users.fetch(targetUserId);
+            if (targetUser) {
+              await targetUser.send(
+                `🎉 **[ROYNIX LOUD PREMIUM LICENSE KEY]**\n` +
+                `You have received an official LOUD Studio Premium license key from Developer <@${DEVELOPER_ID}>!\n\n` +
+                `🔑 **License Code**: \`${key}\`\n` +
+                `⏳ **Duration**: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n\n` +
+                `🚀 **Features Unlocked:**\n` +
+                `• 20 Bots connected simultaneously in voice & chat\n` +
+                `• 10,000% Volume Overdrive (\`!volume 10000\`)\n` +
+                `• 24/7 Voice Stay (\`!247\`)\n` +
+                `• 50-Count Blasts (\`!dm\` & \`!spam .50\`)\n\n` +
+                `**How to Redeem:**\n` +
+                `• **In Discord**: Type \`!premium redeem ${key}\` in any channel where the bot is present.\n` +
+                `• **On Website**: Go to the **Usage & Billing** page (\`/usage\`) and redeem your key!`
+              );
+              dmSent = true;
+            }
+          } catch (dmErr: any) {
+            console.warn(`[Premium] Could not DM user ${targetUserId}:`, dmErr.message);
+            dmSent = false;
+          }
+
+          if (dmSent) {
+            try {
+              await message.react('📬');
+            } catch {}
             await message.reply(
-              `🔑 **[LICENSE KEY GENERATED]**\n` +
-              `Code: \`${key}\`\n` +
-              `Duration: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n` +
-              `Customer Instruction: Run \`!premium redeem ${key}\``
+              `✅ **[LICENSE KEY GENERATED & DELIVERED]**\n` +
+              `👤 **Recipient**: <@${targetUserId}>\n` +
+              `⏳ **Duration**: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n` +
+              `📬 The redeem key has been securely delivered to their Direct Messages!`
+            );
+          } else {
+            try {
+              await message.react('⚠️');
+            } catch {}
+            await message.reply(
+              `⚠️ **[LICENSE KEY GENERATED — DMS CLOSED]**\n` +
+              `👤 **Recipient**: <@${targetUserId}>\n` +
+              `⏳ **Duration**: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n` +
+              `🔑 **Key**: \`${key}\`\n` +
+              `Notice: Could not send DM to <@${targetUserId}> (their DMs are closed or disabled). Please send them this key manually.`
             );
           }
           return;
@@ -1346,13 +1389,18 @@ export class BotCommandService {
               `👉 Contact Developer <@${DEVELOPER_ID}> or redeem a key with \`!premium redeem <code>\`!`
             : '';
 
+        const blastCountDisplay =
+          targetTier.tier === 'developer' || !Number.isFinite(targetTier.maxSpamCount)
+            ? 'infinite Messages'
+            : `${targetTier.maxSpamCount} Messages`;
+
         await message.reply(
           `${tierEmoji} **LOUD STUDIO ACCOUNT TIER**\n` +
           `👤 **User**: <@${checkTargetId}>\n` +
           `⭐ **Plan**: **${tierTitle} TIER**\n` +
           `🤖 **Max Fleet Bots**: **${targetTier.maxBots} Bots**\n` +
           `🔊 **Max Volume**: **${targetTier.maxVolume}%**\n` +
-          `⚡ **Max Blast Count**: **${targetTier.maxSpamCount} Messages**\n` +
+          `⚡ **Max Blast Count**: **${blastCountDisplay}**\n` +
           `⏳ **Expiration**: **${expiryText}**${upgradeTip}`
         );
         return;
@@ -1373,7 +1421,7 @@ export class BotCommandService {
             premiumLines.push(
               '',
               '👑 **Developer Administration**:',
-              '• `!premium generate [days=30]` — Generate a new license key (sent to DM)',
+              '• `!premium generate <@user | ID> [days=30]` — Generate a license key and send directly to user\'s DM',
               '• `!premium enable <@user | ID> [days=30]` — Instantly activate Premium for a user (0 = Lifetime)',
               '• `!premium disable <@user | ID>` — Revoke premium access and revert to Free Tier'
             );

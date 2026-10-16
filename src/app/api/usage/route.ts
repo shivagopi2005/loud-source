@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/server/db/prisma';
 import { authorizeWorkspaceMember } from '@/server/security/rbac';
+import { PremiumService } from '@/server/services/premium.service';
 import { okResponse, handleApiError, errorResponse } from '@/server/utils/api-response';
 
 export async function GET(request: NextRequest) {
@@ -32,6 +33,13 @@ export async function GET(request: NextRequest) {
       return errorResponse('WORKSPACE_NOT_FOUND', 'Workspace not found', 404);
     }
 
+    // Retrieve user and real tier limits
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+    });
+
+    const userTier = await PremiumService.getUserTier(dbUser?.discord_id || '');
+
     // Quotas based on plan
     const isEnterprise = workspace.plan_id === 'enterprise';
     const isPro = workspace.plan_id === 'pro';
@@ -55,60 +63,45 @@ export async function GET(request: NextRequest) {
       .filter((r) => r.resource_type === 'message_count')
       .reduce((acc, curr) => acc + curr.quantity, 0);
 
-    // Active voice sessions in this workspace
+    // Real active voice sessions in this workspace
     const activeVoiceSessions = await prisma.voiceSession.count({
       where: { workspace_id: workspaceId, state: 'active' },
     });
 
-    // Invoices list (derived from subscriptions or standard workspace billing history)
-    const invoices = [
-      {
-        id: 'INV-2026-1001',
-        date: '2026-10-01',
-        description: 'Enterprise Voice Studio Subscription — Monthly Fleet Capacity (100 Bots)',
-        amount: isEnterprise ? '$99.00' : isPro ? '$29.00' : '$0.00',
-        status: 'paid',
-        receiptUrl: '#',
+    // Real redeemed license keys for this user
+    const redemptions = await prisma.licenseKey.findMany({
+      where: {
+        redeemed_by: dbUser?.discord_id || '',
+        is_redeemed: true,
       },
-      {
-        id: 'INV-2026-0901',
-        date: '2026-09-01',
-        description: 'Enterprise Voice Studio Subscription — Monthly Fleet Capacity (100 Bots)',
-        amount: isEnterprise ? '$99.00' : isPro ? '$29.00' : '$0.00',
-        status: 'paid',
-        receiptUrl: '#',
+      orderBy: { redeemed_at: 'desc' },
+      select: {
+        id: true,
+        code: true,
+        tier: true,
+        duration_days: true,
+        redeemed_at: true,
+        created_at: true,
       },
-      {
-        id: 'INV-2026-0801',
-        date: '2026-08-01',
-        description: 'Pro Voice Studio + Multi-Bot Fleet Expansion Pack',
-        amount: '$49.00',
-        status: 'paid',
-        receiptUrl: '#',
-      },
-    ];
+    });
 
     return okResponse({
       workspaceId,
       plan: workspace.plan_id,
       planName: isEnterprise
-        ? 'Enterprise Voice Studio Tier'
+        ? 'Enterprise Voice Fleet'
         : isPro
-        ? 'Professional Voice Studio Tier'
-        : 'Free Community Starter Tier',
-      billingCycle: {
-        period: currentPeriod,
-        renewsAt: '2026-11-01T00:00:00.000Z',
-        autoRenew: true,
-        priceMonthly: isEnterprise ? 99 : isPro ? 29 : 0,
-      },
-      paymentMethod: {
-        type: 'card',
-        brand: 'Visa',
-        last4: '4242',
-        expMonth: 8,
-        expYear: 2029,
-        isDefault: true,
+        ? 'Professional Voice Studio'
+        : 'Free Community Starter',
+      billingModel: 'license_key',
+      userTier: {
+        tier: userTier.tier,
+        maxBots: userTier.maxBots,
+        maxVolume: userTier.maxVolume,
+        maxSpamCount: Number.isFinite(userTier.maxSpamCount) ? userTier.maxSpamCount : 'infinite',
+        expiresAt: userTier.expiresAt,
+        isExpired: userTier.isExpired,
+        isDeveloper: userTier.isDeveloper,
       },
       quotas: {
         maxBots,
@@ -127,7 +120,13 @@ export async function GET(request: NextRequest) {
         bandwidthMB: parseFloat(((voiceSecondsUsed * 48000 * 2) / (1024 * 1024)).toFixed(1)),
         audioPacketsEncoded: Math.round(voiceSecondsUsed * 50),
       },
-      invoices,
+      redemptions: redemptions.map((r) => ({
+        id: r.id,
+        code: r.code,
+        tier: r.tier,
+        duration: r.duration_days === 0 ? 'Lifetime' : `${r.duration_days} Days`,
+        redeemedAt: r.redeemed_at ? r.redeemed_at.toISOString().slice(0, 10) : 'Active',
+      })),
     });
   } catch (err) {
     return handleApiError(err);
