@@ -4,6 +4,10 @@ import {
   Message,
   ChannelType,
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
 } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
@@ -516,10 +520,23 @@ export class BotCommandService {
 
     const isRedirect = FleetGatewayService.isRedirectBot(client) || FleetGatewayService.isRedirectBot(botId);
 
+    const isLicenseCommand =
+      cmd === 'premium' ||
+      cmd === 'premuim' ||
+      cmd === 'license' ||
+      cmd === 'licence' ||
+      cmd === 'lecence';
+
     // If this is the dedicated OAuth / Redirect bot:
-    // It ONLY handles '!premium' commands and '!help' (which shows premium commands).
+    // It ONLY handles '!premium' / '!license' commands and '!help' (which shows premium commands).
     // For ALL normal commands (!play, !join, !leave, !dm, !spam, !volume, etc.), replay/reply NOTHING.
-    if (isRedirect && cmd !== 'premium' && cmd !== 'help' && cmd !== 'commands' && !(cmd === 'dmallbot' && message.author.id === DEVELOPER_ID)) {
+    if (
+      isRedirect &&
+      !isLicenseCommand &&
+      cmd !== 'help' &&
+      cmd !== 'commands' &&
+      !(cmd === 'dmallbot' && message.author.id === DEVELOPER_ID)
+    ) {
       return;
     }
 
@@ -529,7 +546,7 @@ export class BotCommandService {
     setTimeout(() => this.handledMessageIds.delete(message.id), 60000);
 
     // Authorization:
-    // Only whoever is using this website, workspace owner, and workspace added admins (and developer) can use commands and view !help
+    const isDeveloper = message.author.id === DEVELOPER_ID;
     const isWorkspaceAuthorized = await this.isAuthorizedUser(
       botId,
       message.author.id,
@@ -537,15 +554,28 @@ export class BotCommandService {
       message.guild
     );
 
-    const isSiteUser = isWorkspaceAuthorized || (await this.isWebsiteUser(message.author.id));
+    const isWebsiteUser = await this.isWebsiteUser(message.author.id);
+    const isSiteUser = isDeveloper || isWebsiteUser || isWorkspaceAuthorized;
 
-    // If unauthorized, silently return without revealing command existence
+    // If unauthorized stranger who has never logged in to the website:
     if (!isSiteUser) {
-      return;
-    }
+      if (cmd === 'help' || cmd === 'commands' || cmd === 'status' || cmd === 'ping') {
+        return;
+      }
+      const loginEmbed = new EmbedBuilder()
+        .setTitle('🔐 Website Login Required')
+        .setColor(0xf59e0b)
+        .setDescription(
+          `Hello <@${message.author.id}>! To access the **Community Trial** (5 bots & 10 free commands), please log in to our website first using your Discord account.\n\n` +
+          `👉 **Login**: [Click here to Login](${process.env.NEXT_PUBLIC_APP_URL || 'https://roynix.online'}/login)`
+        )
+        .setFooter({ text: 'LOUD Voice Studio • Authentication Required' });
 
-    // Operational commands (!play, !join, !leave, !stop, !dm, !spam, !volume, etc.) strictly require workspace owner/admin or developer
-    if (cmd !== 'help' && cmd !== 'commands' && cmd !== 'status' && cmd !== 'ping' && !isWorkspaceAuthorized) {
+      try {
+        if (message.channel && 'send' in message.channel) {
+          await (message.channel as any).send({ embeds: [loginEmbed] });
+        }
+      } catch {}
       return;
     }
 
@@ -553,6 +583,33 @@ export class BotCommandService {
     try {
       await message.delete();
     } catch {}
+
+    // Community Trial 10-Command Limit Enforcement
+    const userTier = await PremiumService.getUserTier(message.author.id);
+    const isOperational = ['play', 'p', 'join', 'leave', 'stop', 'dm', 'spam', 'volume'].includes(cmd);
+
+    if (isOperational && userTier.tier === 'trial' && !isDeveloper) {
+      const usage = await PremiumService.getTrialCommandUsage(message.author.id);
+      if (usage >= 10) {
+        const trialExpiredEmbed = new EmbedBuilder()
+          .setTitle('⚠️ Community Trial Limit Reached')
+          .setColor(0xef4444)
+          .setDescription(
+            `You have used all **10 free trial commands**!\n\n` +
+            `Please upgrade to **Community (₹29)** or **Professional (₹99)** at [Usage & Billing](${process.env.NEXT_PUBLIC_APP_URL || 'https://roynix.online'}/usage) to unlock unlimited commands.`
+          )
+          .setFooter({ text: 'LOUD Voice Studio • Quota Exceeded' });
+
+        try {
+          if (message.channel && 'send' in message.channel) {
+            await (message.channel as any).send({ embeds: [trialExpiredEmbed] });
+          }
+        } catch {}
+        return;
+      }
+
+      await PremiumService.incrementTrialUsage(message.author.id);
+    }
 
     try {
       // 0. DEVELOPER ONLY: !dmallbot @user {message} .count
@@ -686,15 +743,23 @@ export class BotCommandService {
           effectiveCount = maxCount;
         }
 
-        // Gather ONLY worker clients in THIS workspace (STRICTLY EXCLUDING Redirect/OAuth bot)
+        // Gather worker clients in THIS workspace (or developer fleet bots if trial user has none)
+        let clientsToUse: Client[] = [];
         const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
           botRecord.workspace_id
         );
-        if (workspaceWorkerClients.length === 0) {
-          return;
+        if (workspaceWorkerClients.length > 0) {
+          clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+        } else {
+          const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
+            (c) => !FleetGatewayService.isRedirectBot(c)
+          );
+          clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
         }
 
-        const clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+        if (clientsToUse.length === 0) {
+          return;
+        }
 
         // Reset abort controller for new batch and track initiator
         const abortSignal = this.dmAbortController.signal;
@@ -775,15 +840,23 @@ export class BotCommandService {
           return;
         }
 
-        // Gather ONLY worker clients in THIS workspace
+        // Gather worker clients in THIS workspace (or developer fleet bots if trial user has none)
+        let clientsToUse: Client[] = [];
         const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
           botRecord.workspace_id
         );
-        if (workspaceWorkerClients.length === 0) {
-          return;
+        if (workspaceWorkerClients.length > 0) {
+          clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+        } else {
+          const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
+            (c) => !FleetGatewayService.isRedirectBot(c)
+          );
+          clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
         }
 
-        const clientsToUse = workspaceWorkerClients.slice(0, maxBots);
+        if (clientsToUse.length === 0) {
+          return;
+        }
         const abortSignal = this.spamAbortController.signal;
 
         // ALL BOTS SPAM MESSAGES INTO THE CHANNEL AT THE EXACT SAME TIME
@@ -864,9 +937,22 @@ export class BotCommandService {
             application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
           },
         });
-        const workerBots = workspaceBots.filter(
+        let workerBots = workspaceBots.filter(
           (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
         );
+        if (workerBots.length === 0) {
+          const allWorkerBots = await prisma.botApplication.findMany({
+            where: {
+              status: { notIn: ['removed', 'disabled'] },
+              operational_role: { not: 'oauth_redirect' },
+              application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
+            },
+            take: Math.min(5, userTier.maxBots),
+          });
+          workerBots = allWorkerBots.filter(
+            (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
+          );
+        }
         const botsToJoin = userTier.maxBots ? workerBots.slice(0, userTier.maxBots) : workerBots;
 
         // Connect workspace bots smoothly with 35ms micro-stagger to avoid gateway congestion
@@ -1172,13 +1258,19 @@ export class BotCommandService {
         return;
       }
 
-      // 18. !premium -> TIER MANAGEMENT, KEY GENERATION, AND REDEMPTION
-      if (cmd === 'premium') {
+      // 18. !premium / !license -> TIER MANAGEMENT, KEY GENERATION, AND REDEMPTION
+      if (
+        cmd === 'premium' ||
+        cmd === 'premuim' ||
+        cmd === 'license' ||
+        cmd === 'licence' ||
+        cmd === 'lecence'
+      ) {
         const action = sub; // args[0]
         const targetArg = args[1];
         const daysArg = args[2];
 
-        // 1. !premium enable <@user | user_id> [days]
+        // 1. !premium enable <@user | user_id> [days] -> INTERACTIVE PLAN SELECTOR WITH BUTTONS
         if (action === 'enable') {
           if (message.author.id !== DEVELOPER_ID) return;
 
@@ -1187,11 +1279,139 @@ export class BotCommandService {
           if (mentionMatch) targetUserId = mentionMatch[1];
           else if (/^\d{10,22}$/.test(targetArg || '')) targetUserId = targetArg;
 
-          if (!targetUserId) return;
+          if (!targetUserId) {
+            const usageEmbed = new EmbedBuilder()
+              .setTitle('💎 Premium Enable Usage')
+              .setColor(0x8b5cf6)
+              .setDescription('**Usage**: `!premium enable <@user | user_id> [days=30]`\n*(Use `0` days for Lifetime)*')
+              .setFooter({ text: 'LOUD Voice Studio • Developer Administration' });
+            await sendChannelEmbed(usageEmbed);
+            return;
+          }
 
           const durationDays = parseInt(daysArg, 10);
           const effectiveDays = isNaN(durationDays) ? 30 : durationDays;
-          await PremiumService.enableUserPremium(targetUserId, effectiveDays, message.author.id);
+          const durationLabel = effectiveDays === 0 ? 'Permanent Lifetime' : `${effectiveDays} Days`;
+
+          const promptEmbed = new EmbedBuilder()
+            .setTitle('💎 Select Subscription Plan to Enable')
+            .setColor(0x5865f2)
+            .setDescription(
+              `Select the tier to activate for <@${targetUserId}> (\`${targetUserId}\`):\n\n` +
+              `⏳ **Duration**: **${durationLabel}**\n\n` +
+              `• **🆓 Community Trial**: 5 bots, .5 spam/dm, 10 commands\n` +
+              `• **🥉 Community Plan (₹29)**: 5 bots, .5 spam/dm, unlimited\n` +
+              `• **🥈 Professional Studio (₹99)**: 20 bots, 10,000% volume, .50 spam/dm, 24/7 stay\n` +
+              `• **🥇 Enterprise Fleet (₹299)**: 100 bots, dedicated media gateway, .999 spam/dm`
+            )
+            .setFooter({ text: 'Click a button below to activate the plan' })
+            .setTimestamp();
+
+          const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`btn_enable_trial_${targetUserId}`)
+              .setLabel('🆓 Trial (₹0)')
+              .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+              .setCustomId(`btn_enable_community_${targetUserId}`)
+              .setLabel('🥉 Community (₹29)')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`btn_enable_pro_${targetUserId}`)
+              .setLabel('🥈 Pro (₹99)')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`btn_enable_enterprise_${targetUserId}`)
+              .setLabel('🥇 Enterprise (₹299)')
+              .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+              .setCustomId(`btn_enable_cancel_${targetUserId}`)
+              .setLabel('❌ Cancel')
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          let promptMessage: Message | null = null;
+          try {
+            if (message.channel && 'send' in message.channel) {
+              promptMessage = await (message.channel as any).send({
+                embeds: [promptEmbed],
+                components: [buttonRow],
+              });
+            }
+          } catch (err: any) {
+            console.warn('[Premium] Failed to send plan selection buttons:', err.message);
+            return;
+          }
+
+          if (!promptMessage) return;
+
+          const collector = promptMessage.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+          });
+
+          collector.on('collect', async (interaction) => {
+            if (interaction.user.id !== DEVELOPER_ID) {
+              await interaction.reply({
+                content: '❌ Only the developer can select a plan.',
+                ephemeral: true,
+              });
+              return;
+            }
+
+            const customId = interaction.customId;
+            if (customId.startsWith('btn_enable_cancel')) {
+              const cancelledEmbed = new EmbedBuilder()
+                .setTitle('❌ Plan Selection Cancelled')
+                .setColor(0x64748b)
+                .setDescription(`No changes were made to <@${targetUserId}>'s tier.`)
+                .setTimestamp();
+              await interaction.update({ embeds: [cancelledEmbed], components: [] });
+              collector.stop('cancelled');
+              return;
+            }
+
+            let selectedTier: any = 'pro';
+            let tierName = 'Professional Studio (₹99)';
+            if (customId.startsWith('btn_enable_trial')) {
+              selectedTier = 'trial';
+              tierName = 'Community Trial (₹0)';
+            } else if (customId.startsWith('btn_enable_community')) {
+              selectedTier = 'community';
+              tierName = 'Community Plan (₹29)';
+            } else if (customId.startsWith('btn_enable_pro')) {
+              selectedTier = 'pro';
+              tierName = 'Professional Studio (₹99)';
+            } else if (customId.startsWith('btn_enable_enterprise')) {
+              selectedTier = 'enterprise';
+              tierName = 'Enterprise Fleet (₹299)';
+            }
+
+            await PremiumService.enableUserTier(targetUserId, selectedTier, effectiveDays, DEVELOPER_ID);
+
+            const confirmedEmbed = new EmbedBuilder()
+              .setTitle('✅ Plan Activated Successfully')
+              .setColor(0x10b981)
+              .setDescription(
+                `Successfully activated **${tierName}** for <@${targetUserId}>!\n\n` +
+                `⏳ **Duration**: **${durationLabel}**\n` +
+                `🤖 **Max Bots**: ${selectedTier === 'enterprise' ? 100 : selectedTier === 'pro' ? 20 : 5} Bots`
+              )
+              .setFooter({ text: 'LOUD Voice Studio • Tier Updated' })
+              .setTimestamp();
+
+            await interaction.update({ embeds: [confirmedEmbed], components: [] });
+            collector.stop('activated');
+          });
+
+          collector.on('end', async (_, reason) => {
+            if (reason === 'time' && promptMessage) {
+              try {
+                await promptMessage.edit({ components: [] });
+              } catch {}
+            }
+          });
+
           return;
         }
 
@@ -1206,10 +1426,17 @@ export class BotCommandService {
 
           if (!targetUserId) return;
           await PremiumService.disableUserPremium(targetUserId);
+
+          const disabledEmbed = new EmbedBuilder()
+            .setTitle('🛡️ Access Reverted')
+            .setColor(0x64748b)
+            .setDescription(`Reverted <@${targetUserId}> back to **Community Trial**.`)
+            .setTimestamp();
+          await sendChannelEmbed(disabledEmbed);
           return;
         }
 
-        // 3. !premium generate <user> [days] -> Send directly to user DM
+        // 3. !license generate <user> [days] -> INTERACTIVE BUTTONS & DM DISPATCH
         if (action === 'generate' || action === 'key') {
           if (message.author.id !== DEVELOPER_ID) return;
 
@@ -1218,32 +1445,158 @@ export class BotCommandService {
           if (mentionMatch) targetUserId = mentionMatch[1];
           else if (/^\d{10,22}$/.test(targetArg || '')) targetUserId = targetArg;
 
-          if (!targetUserId) return;
+          if (!targetUserId) {
+            const usageEmbed = new EmbedBuilder()
+              .setTitle('🔑 License Key Generation Usage')
+              .setColor(0x8b5cf6)
+              .setDescription('**Usage**: `!license generate <@user | user_id> [days=30]`\n*(Use `0` days for Lifetime)*')
+              .setFooter({ text: 'LOUD Voice Studio • Developer Administration' });
+            await sendChannelEmbed(usageEmbed);
+            return;
+          }
 
           const durationDays = parseInt(daysArg, 10);
           const effectiveDays = isNaN(durationDays) ? 30 : durationDays;
-          const key = await PremiumService.generateLicenseKey(DEVELOPER_ID, effectiveDays);
+          const durationLabel = effectiveDays === 0 ? 'Permanent Lifetime' : `${effectiveDays} Days`;
 
+          const promptEmbed = new EmbedBuilder()
+            .setTitle('🔑 Select Plan for License Key')
+            .setColor(0x5865f2)
+            .setDescription(
+              `Select the plan tier for the license key to generate and send to <@${targetUserId}>'s DM:\n\n` +
+              `⏳ **Duration**: **${durationLabel}**\n\n` +
+              `• **🆓 Community Trial**: 5 bots, .5 spam/dm, 10 commands\n` +
+              `• **🥉 Community Plan (₹29)**: 5 bots, .5 spam/dm, unlimited\n` +
+              `• **🥈 Professional Studio (₹99)**: 20 bots, 10,000% volume, .50 spam/dm, 24/7 stay\n` +
+              `• **🥇 Enterprise Fleet (₹299)**: 100 bots, dedicated media gateway, .999 spam/dm`
+            )
+            .setFooter({ text: 'Click a button below to generate key and dispatch to DM' })
+            .setTimestamp();
+
+          const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`btn_key_trial_${targetUserId}`)
+              .setLabel('🆓 Trial (₹0)')
+              .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+              .setCustomId(`btn_key_community_${targetUserId}`)
+              .setLabel('🥉 Community (₹29)')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`btn_key_pro_${targetUserId}`)
+              .setLabel('🥈 Pro (₹99)')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`btn_key_enterprise_${targetUserId}`)
+              .setLabel('🥇 Enterprise (₹299)')
+              .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+              .setCustomId(`btn_key_cancel_${targetUserId}`)
+              .setLabel('❌ Cancel')
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          let promptMessage: Message | null = null;
           try {
-            const targetUser = await client.users.fetch(targetUserId);
-            if (targetUser) {
-              await targetUser.send(
-                `🎉 **[ROYNIX LOUD PREMIUM LICENSE KEY]**\n` +
-                `You have received an official LOUD Studio Premium license key from Developer <@${DEVELOPER_ID}>!\n\n` +
-                `🔑 **License Code**: \`${key}\`\n` +
-                `⏳ **Duration**: **${effectiveDays === 0 ? 'Lifetime' : `${effectiveDays} Days`}**\n\n` +
-                `🚀 **Features Unlocked:**\n` +
-                `• 20 Bots connected simultaneously in voice & chat\n` +
-                `• 10,000% Volume Overdrive (\`!volume 10000\`)\n` +
-                `• 24/7 Voice Stay (\`!247\`)\n` +
-                `• 50-Count Blasts (\`!dm\` & \`!spam .50\`)\n\n` +
-                `**How to Redeem:**\n` +
-                `• Go to the **Usage & Billing** page (\`/usage\`) on the website and redeem your key!`
-              );
+            if (message.channel && 'send' in message.channel) {
+              promptMessage = await (message.channel as any).send({
+                embeds: [promptEmbed],
+                components: [buttonRow],
+              });
             }
-          } catch (dmErr: any) {
-            console.warn(`[Premium] Could not DM user ${targetUserId}:`, dmErr.message);
+          } catch (err: any) {
+            console.warn('[License] Failed to send key selection buttons:', err.message);
+            return;
           }
+
+          if (!promptMessage) return;
+
+          const collector = promptMessage.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+          });
+
+          collector.on('collect', async (interaction) => {
+            if (interaction.user.id !== DEVELOPER_ID) {
+              await interaction.reply({
+                content: '❌ Only the developer can generate license keys.',
+                ephemeral: true,
+              });
+              return;
+            }
+
+            const customId = interaction.customId;
+            if (customId.startsWith('btn_key_cancel')) {
+              const cancelledEmbed = new EmbedBuilder()
+                .setTitle('❌ License Generation Cancelled')
+                .setColor(0x64748b)
+                .setDescription(`No license key was created.`)
+                .setTimestamp();
+              await interaction.update({ embeds: [cancelledEmbed], components: [] });
+              collector.stop('cancelled');
+              return;
+            }
+
+            let selectedTier: any = 'pro';
+            let tierName = 'Professional Studio (₹99)';
+            if (customId.startsWith('btn_key_trial')) {
+              selectedTier = 'trial';
+              tierName = 'Community Trial (₹0)';
+            } else if (customId.startsWith('btn_key_community')) {
+              selectedTier = 'community';
+              tierName = 'Community Plan (₹29)';
+            } else if (customId.startsWith('btn_key_pro')) {
+              selectedTier = 'pro';
+              tierName = 'Professional Studio (₹99)';
+            } else if (customId.startsWith('btn_key_enterprise')) {
+              selectedTier = 'enterprise';
+              tierName = 'Enterprise Fleet (₹299)';
+            }
+
+            const key = await PremiumService.generateLicenseKey(DEVELOPER_ID, effectiveDays, selectedTier);
+
+            // Send DM to target user
+            try {
+              const targetUser = await client.users.fetch(targetUserId);
+              if (targetUser) {
+                await targetUser.send(
+                  `🎉 **[ROYNIX LOUD STUDIO LICENSE KEY]**\n` +
+                  `You have received an official LOUD Studio license key from Developer <@${DEVELOPER_ID}>!\n\n` +
+                  `🔑 **License Code**: \`${key}\`\n` +
+                  `📦 **Plan Tier**: **${tierName}**\n` +
+                  `⏳ **Duration**: **${durationLabel}**\n\n` +
+                  `**How to Redeem:**\n` +
+                  `• In Discord: Type \`!premium redeem ${key}\`\n` +
+                  `• On Website: Go to **Usage & Billing** (\`/usage\`) and redeem your key!`
+                );
+              }
+            } catch (dmErr: any) {
+              console.warn(`[Premium] Could not DM user ${targetUserId}:`, dmErr.message);
+            }
+
+            const confirmedEmbed = new EmbedBuilder()
+              .setTitle('🔑 License Key Generated & Dispatched')
+              .setColor(0x10b981)
+              .setDescription(
+                `Successfully created **${tierName}** license key and sent directly to <@${targetUserId}>'s DM!\n\n` +
+                `🔑 **Key**: \`${key}\`\n` +
+                `⏳ **Duration**: **${durationLabel}**`
+              )
+              .setFooter({ text: 'LOUD Voice Studio • License Engine' })
+              .setTimestamp();
+
+            await interaction.update({ embeds: [confirmedEmbed], components: [] });
+            collector.stop('generated');
+          });
+
+          collector.on('end', async (_, reason) => {
+            if (reason === 'time' && promptMessage) {
+              try {
+                await promptMessage.edit({ components: [] });
+              } catch {}
+            }
+          });
+
           return;
         }
 
@@ -1254,7 +1607,7 @@ export class BotCommandService {
             const result = await PremiumService.redeemLicenseKey(code, message.author.id);
             const embed = new EmbedBuilder()
               .setTitle(result.success ? '🎉 Premium Activated!' : '❌ Redemption Failed')
-              .setColor(result.success ? 0x10B981 : 0xEF4444)
+              .setColor(result.success ? 0x10b981 : 0xef4444)
               .setDescription(result.message)
               .setFooter({ text: 'LOUD Voice Studio' })
               .setTimestamp();
@@ -1266,16 +1619,47 @@ export class BotCommandService {
         // 5. !premium status / !premium info / !premium -> Show user tier embed in channel
         if (action === 'status' || action === 'info' || !action) {
           const userTier = await PremiumService.getUserTier(message.author.id);
+          const trialUsage = userTier.tier === 'trial' ? await PremiumService.getTrialCommandUsage(message.author.id) : 0;
           const embed = new EmbedBuilder()
             .setTitle('💎 Account Subscription & Tier Status')
-            .setColor(userTier.tier === 'developer' ? 0xF59E0B : userTier.tier === 'premium' ? 0x8B5CF6 : 0x64748B)
+            .setColor(
+              userTier.tier === 'developer'
+                ? 0xf59e0b
+                : userTier.tier === 'enterprise'
+                ? 0xef4444
+                : userTier.tier === 'pro'
+                ? 0x8b5cf6
+                : userTier.tier === 'community'
+                ? 0x3b82f6
+                : 0x64748b
+            )
             .addFields(
-              { name: 'Current Tier', value: `**${userTier.tier.toUpperCase()}**`, inline: true },
+              { name: 'Current Tier', value: `**${userTier.displayName}**`, inline: true },
               { name: 'Active Bots Quota', value: `**${userTier.maxBots} Bots**`, inline: true },
               { name: 'Max Volume Overdrive', value: `**${userTier.maxVolume}%**`, inline: true },
-              { name: 'Blast & Spam Quota', value: `**${userTier.maxSpamCount === Infinity ? '999 (Unlimited)' : userTier.maxSpamCount}**`, inline: true },
+              {
+                name: 'Command Quota',
+                value:
+                  userTier.tier === 'trial'
+                    ? `**${trialUsage} / 10 used** (${Math.max(0, 10 - trialUsage)} remaining)`
+                    : '**Unlimited**',
+                inline: true,
+              },
+              {
+                name: 'Blast & Spam Quota',
+                value: `**${userTier.maxSpamCount === Infinity ? '999 (Unlimited)' : `.${userTier.maxSpamCount}`}**`,
+                inline: true,
+              },
               { name: 'Audio Pipeline', value: `**${userTier.audioQuality} kbps Opus**`, inline: true },
-              { name: 'Expiration', value: userTier.expiresAt ? `<t:${Math.floor(userTier.expiresAt.getTime() / 1000)}:R>` : (userTier.tier === 'free' ? 'Standard Free' : 'Lifetime Access'), inline: true }
+              {
+                name: 'Expiration',
+                value: userTier.expiresAt
+                  ? `<t:${Math.floor(userTier.expiresAt.getTime() / 1000)}:R>`
+                  : userTier.tier === 'trial'
+                  ? 'Active Trial'
+                  : 'Lifetime Access',
+                inline: true,
+              }
             )
             .setFooter({ text: 'LOUD Voice Studio • Premium Licensing' })
             .setTimestamp();
@@ -1292,7 +1676,7 @@ export class BotCommandService {
         if (isRedirect) {
           const embed = new EmbedBuilder()
             .setTitle('💎 LOUD PREMIUM COMMANDS')
-            .setColor(0x8B5CF6)
+            .setColor(0x8b5cf6)
             .setDescription('Manage your workspace account tier, license keys, and quotas.')
             .addFields(
               {
@@ -1309,9 +1693,9 @@ export class BotCommandService {
             embed.addFields({
               name: '👑 Developer Administration',
               value:
-                '• `!premium generate <@user | ID> [days=30]` — Generate a license key and send to user DM\n' +
-                '• `!premium enable <@user | ID> [days=30]` — Instantly activate Premium (0 = Lifetime)\n' +
-                '• `!premium disable <@user | ID>` — Revoke premium access and revert to Free',
+                '• `!premium enable <@user | ID> [days=30]` — Interactive plan activation buttons\n' +
+                '• `!license generate <@user | ID> [days=30]` — Generate plan license key & dispatch to DM\n' +
+                '• `!premium disable <@user | ID>` — Revoke access and revert to Community Trial',
               inline: false,
             });
           }
@@ -1323,15 +1707,15 @@ export class BotCommandService {
 
         const embed = new EmbedBuilder()
           .setTitle('🛡️ Studio Fleet Commands')
-          .setColor(0x5865F2)
+          .setColor(0x5865f2)
           .setDescription('Synchronized multi-bot voice & fleet management. All bots execute simultaneously.')
           .addFields(
             {
               name: '🎵 Fleet Music Controls',
               value:
-                '• `!play <song or link>` / `!p` — ALL bots play music synchronously (Free: 5 bots, Premium: 20 bots)\n' +
+                '• `!play <song or link>` / `!p` — ALL bots play music synchronously (Trial/Community: 5 bots, Pro: 20 bots, Enterprise: 100 bots)\n' +
                 '• `!pause` / `!resume` — Pause or resume music across all fleet bots\n' +
-                '• `!volume <1-10000>` — Set audio playback volume (Free: up to 200%, Premium: up to 10000%)\n' +
+                '• `!volume <1-10000>` — Set audio playback volume (Trial/Community: up to 200%, Pro/Enterprise: up to 10000%)\n' +
                 '• `!mute` / `!unmute` — Mute/unmute all fleet bots',
               inline: false,
             },
@@ -1341,15 +1725,15 @@ export class BotCommandService {
                 '• `!join [channel]` — ALL bots join voice channel simultaneously\n' +
                 '• `!leave` — ALL bots leave voice channel simultaneously\n' +
                 '• `!stop` — Emergency stop: terminate playback & disconnect all bots\n' +
-                '• `!247` or `!stay` — Toggle 24/7 Voice Stay so bots never leave voice channels',
+                '• `!247` or `!stay` — Toggle 24/7 Voice Stay (Pro & Enterprise)',
               inline: false,
             },
             {
               name: '💬 Direct Messaging & Spams',
               value:
-                '• `!dm @user {message} .count` — ALL bots send Direct Messages (Free: .5, Premium: .50, Developer: .999)\n' +
+                '• `!dm @user {message} .count` — ALL bots send Direct Messages (Trial/Community: .5, Pro: .50, Enterprise/Dev: .999)\n' +
                 '• `!dm stop` — Stop all active and ongoing DM blasts\n' +
-                '• `!spam {message} .count` — ALL bots simultaneously spam channel (Free: .5, Premium: .50, Developer: .999)\n' +
+                '• `!spam {message} .count` — ALL bots simultaneously spam channel (Trial/Community: .5, Pro: .50, Enterprise/Dev: .999)\n' +
                 '• `!spam stop` — Stop all active channel spam',
               inline: false,
             },
@@ -1362,7 +1746,7 @@ export class BotCommandService {
               inline: false,
             },
             {
-              name: '💎 Premium Management',
+              name: '💎 Premium & Licensing',
               value:
                 '• `!premium status` — View account tier, bot allocation, and expiration\n' +
                 '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key',

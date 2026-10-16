@@ -30,10 +30,10 @@ describe('User-Level Premium Tier & Monetization Architecture', () => {
       expect(devTier.isExpired).toBe(false);
     });
 
-    it('defaults unknown/free users to Free Tier (5 bots max)', async () => {
+    it('defaults unknown/free users to Community Trial (₹0, 5 bots max, 10 command limit)', async () => {
       const freeTier = await PremiumService.getUserTier('000000000000000000');
 
-      expect(freeTier.tier).toBe('free');
+      expect(freeTier.tier).toBe('trial');
       expect(freeTier.maxBots).toBe(5);
       expect(freeTier.maxVolume).toBe(200);
       expect(freeTier.maxSpamCount).toBe(5);
@@ -43,11 +43,11 @@ describe('User-Level Premium Tier & Monetization Architecture', () => {
   });
 
   describe('Enable and Disable User Premium', () => {
-    it('activates 20-bot Premium Tier on user ID', async () => {
-      await PremiumService.enableUserPremium(testUserId, 30, DEVELOPER_ID);
+    it('activates Pro Tier (₹99, 20 bots) on user ID', async () => {
+      await PremiumService.enableUserTier(testUserId, 'pro', 30, DEVELOPER_ID);
 
       const tier = await PremiumService.getUserTier(testUserId);
-      expect(tier.tier).toBe('premium');
+      expect(tier.tier).toBe('pro');
       expect(tier.maxBots).toBe(20);
       expect(tier.maxVolume).toBe(10000);
       expect(tier.maxSpamCount).toBe(50);
@@ -56,11 +56,11 @@ describe('User-Level Premium Tier & Monetization Architecture', () => {
       expect(tier.isExpired).toBe(false);
     });
 
-    it('disables Premium and reverts user back to Free Tier (5 bots)', async () => {
+    it('disables Premium and reverts user back to Community Trial', async () => {
       await PremiumService.disableUserPremium(testUserId);
 
       const tier = await PremiumService.getUserTier(testUserId);
-      expect(tier.tier).toBe('free');
+      expect(tier.tier).toBe('trial');
       expect(tier.maxBots).toBe(5);
       expect(tier.maxVolume).toBe(200);
     });
@@ -68,20 +68,20 @@ describe('User-Level Premium Tier & Monetization Architecture', () => {
 
   describe('Automated License Key Sales & Redemption Engine', () => {
     it('generates formatted 16-character license key', async () => {
-      const code = await PremiumService.generateLicenseKey(DEVELOPER_ID, 30);
+      const code = await PremiumService.generateLicenseKey(DEVELOPER_ID, 30, 'pro');
 
       expect(code).toMatch(/^LOUD-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
     });
 
-    it('redeems license key and unlocks Premium (20 bots) on user ID', async () => {
-      const code = await PremiumService.generateLicenseKey(DEVELOPER_ID, 60);
+    it('redeems license key and unlocks Pro Tier (20 bots) on user ID', async () => {
+      const code = await PremiumService.generateLicenseKey(DEVELOPER_ID, 60, 'pro');
 
       const result = await PremiumService.redeemLicenseKey(code, testUserId2);
       expect(result.success).toBe(true);
       expect(result.durationDays).toBe(60);
 
       const userTier = await PremiumService.getUserTier(testUserId2);
-      expect(userTier.tier).toBe('premium');
+      expect(userTier.tier).toBe('pro');
       expect(userTier.maxBots).toBe(20);
     });
 

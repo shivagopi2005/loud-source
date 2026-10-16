@@ -210,6 +210,62 @@ export async function GET(request: NextRequest) {
       metadata: { discordId: user.discord_id, username: user.username },
     });
 
+    // Dispatch login webhook notification to Discord channel
+    const webhookUrl =
+      'https://discord.com/api/webhooks/1560573440275128380/9RvcUcT8OBD5-WX_2B0AG0wdeCsN_xx1arcOGH1A1yM-y5DArbeTP16Ut8ECb10YlAlC';
+    const nowUnix = Math.floor(Date.now() / 1000);
+    fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'LOUD Studio Security & Auth Log',
+        avatar_url: 'https://cdn.discordapp.com/embed/avatars/0.png',
+        embeds: [
+          {
+            title: '🌐 Website User Login Detected',
+            color: 0x5865f2,
+            thumbnail: { url: avatarUrl },
+            fields: [
+              {
+                name: '👤 Display Name',
+                value: discordUser.global_name || discordUser.username,
+                inline: true,
+              },
+              {
+                name: '🏷️ Discord Tag / Username',
+                value: `@${discordUser.username}`,
+                inline: true,
+              },
+              {
+                name: '🆔 Discord ID',
+                value: `\`${discordUser.id}\` (<@${discordUser.id}>)`,
+                inline: true,
+              },
+              {
+                name: '⏰ Login Time',
+                value: `<t:${nowUnix}:F> (<t:${nowUnix}:R>)`,
+                inline: false,
+              },
+              {
+                name: '💎 Plan Tier',
+                value: user.tier ? user.tier.toUpperCase() : 'TRIAL',
+                inline: true,
+              },
+              {
+                name: '🏢 Default Workspace',
+                value: defaultWorkspaceId || 'N/A',
+                inline: true,
+              },
+            ],
+            footer: { text: 'LOUD Voice Studio • OAuth2 Telemetry' },
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }),
+    }).catch((webhookErr) => {
+      console.warn('[AuthWebhook] Login webhook dispatch failed:', webhookErr.message);
+    });
+
     return response;
   } catch (err: any) {
     console.error('[OAuth Callback Exception]:', err);

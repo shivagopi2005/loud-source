@@ -114,46 +114,63 @@ export default function UsageAndBillingPage() {
 
   const plans = [
     {
-      id: 'free',
-      name: 'Community Free',
-      description: 'Default tier for testing voice broadcast with small server setups.',
+      id: 'trial',
+      name: 'Community Trial',
+      price: '₹0',
+      description: 'Free trial for members who log into the website. Includes 10 fleet command uses.',
+      features: [
+        '5 Developer Fleet Bots',
+        '10 Total Fleet Command Uses',
+        'Max .5 Spam & .5 DM',
+        'Standard 128kbps Opus Audio',
+        'Website Login Activation',
+      ],
+      isCurrent: currentPlan.toLowerCase() === 'free' || currentPlan.toLowerCase() === 'trial',
+      popular: false,
+    },
+    {
+      id: 'community',
+      name: 'Community Plan',
+      price: '₹29',
+      description: 'Full permanent access for small servers and active communities.',
       features: [
         'Up to 5 Discord Fleet Bots',
-        '2 Concurrent Voice Channels',
-        '10 Voice Streaming Hours / mo',
+        'Unlimited Fleet Command Uses',
+        'Max .5 Spam & .5 DM',
         'Standard 128kbps Opus Audio',
         'Community Discord Support',
       ],
-      isCurrent: currentPlan.toLowerCase() === 'free',
+      isCurrent: currentPlan.toLowerCase() === 'community',
       popular: false,
     },
     {
       id: 'pro',
       name: 'Professional Studio',
+      price: '₹99',
       description: 'Built for active Discord creators and multi-stage broadcast communities.',
       features: [
         'Up to 25 Discord Fleet Bots',
-        '10 Concurrent Voice Channels',
-        '100 Voice Streaming Hours / mo',
+        '10,000% Volume Overdrive',
+        'Max .50 Spam & .50 DM',
         'High-Fidelity 320kbps Audio Pipeline',
+        '24/7 Voice Channel Stay',
         'Multi-Bot Group Voice Sync',
-        'Standard SLA (99.9% Uptime)',
       ],
-      isCurrent: currentPlan.toLowerCase() === 'pro',
+      isCurrent: currentPlan.toLowerCase() === 'pro' || currentPlan.toLowerCase() === 'premium',
       popular: false,
     },
     {
       id: 'enterprise',
-      name: 'Enterprise Voice Fleet',
+      name: 'Enterprise Fleet',
+      price: '₹299',
       description: 'Production-grade infrastructure for massive fleets and 24/7 audio staging.',
       features: [
         'Up to 100 Discord Fleet Bots',
-        '20 Concurrent Voice Channels',
-        '500 Voice Streaming Hours / mo',
         'Dedicated WebSocket Media Gateway (:3001)',
-        'Zero-Latency WebRTC & Sub-millisecond Buffer',
+        'Max .999 Spam & .999 DM',
+        'High-Fidelity 320kbps Audio Pipeline',
+        '24/7 Priority Voice Stay',
         'Priority 24/7 High-Availability SLA',
-        'Immutable Security Audit Logs (Full Trail)',
       ],
       isCurrent: isEnterprise,
       popular: true,
@@ -477,18 +494,18 @@ export default function UsageAndBillingPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {plans.map((p) => (
             <div
               key={p.id}
-              className={`rounded-2xl p-6 flex flex-col justify-between border relative transition-all ${
+              className={`rounded-2xl p-5 flex flex-col justify-between border relative transition-all ${
                 p.isCurrent
                   ? 'bg-gradient-to-b from-primary/10 via-card to-card border-primary/50 shadow-xl ring-1 ring-primary/40'
                   : 'bg-card border-border hover:border-border/80'
               }`}
             >
               {p.popular && (
-                <div className="absolute -top-3 right-6 bg-primary text-primary-foreground text-[10px] font-extrabold uppercase px-3 py-0.5 rounded-full shadow-sm tracking-wider">
+                <div className="absolute -top-3 right-5 bg-primary text-primary-foreground text-[10px] font-extrabold uppercase px-3 py-0.5 rounded-full shadow-sm tracking-wider">
                   Active Workspace Tier
                 </div>
               )}
@@ -496,14 +513,20 @@ export default function UsageAndBillingPage() {
               <div className="space-y-4">
                 <div>
                   <div className="flex items-center justify-between">
-                    <h4 className="text-base font-bold text-foreground">{p.name}</h4>
+                    <h4 className="text-sm font-bold text-foreground">{p.name}</h4>
                     {p.isCurrent && (
                       <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-primary/20 text-primary border border-primary/30">
                         Current
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1 min-h-[32px]">{p.description}</p>
+                  <div className="mt-2 flex items-baseline gap-1">
+                    <span className="text-xl font-extrabold text-foreground">{p.price}</span>
+                    {p.price !== '₹0' && (
+                      <span className="text-[11px] text-muted-foreground font-medium">/ mo</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5 min-h-[32px]">{p.description}</p>
                 </div>
 
                 <ul className="space-y-2.5 text-xs text-foreground/90 border-t border-border/60 pt-4">
