@@ -4,6 +4,7 @@ module.exports = {
       name: 'loud-voice-studio',
       script: 'node_modules/.bin/tsx',
       args: 'src/server/server.ts',
+      node_args: '--max-old-space-size=1024',
       exec_mode: 'fork',
       instances: 1,
       autorestart: true,

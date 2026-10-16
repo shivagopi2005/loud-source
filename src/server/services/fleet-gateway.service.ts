@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, ActivityType } from 'discord.js';
+import { Client, GatewayIntentBits, ActivityType, Options } from 'discord.js';
 import { getVoiceConnection } from '@discordjs/voice';
 import { prisma } from '../db/prisma';
 import { decryptSecret } from '../security/encryption';
@@ -254,6 +254,28 @@ export class FleetGatewayService {
           GatewayIntentBits.MessageContent,
           GatewayIntentBits.DirectMessages,
         ],
+        makeCache: Options.cacheWithLimits({
+          MessageManager: 0,
+          PresenceManager: 0,
+          ReactionManager: 0,
+          ReactionUserManager: 0,
+          ThreadManager: 0,
+          ThreadMemberManager: 0,
+          StageInstanceManager: 0,
+          GuildScheduledEventManager: 0,
+          GuildBanManager: 0,
+          GuildInviteManager: 0,
+          AutoModerationRuleManager: 0,
+          GuildEmojiManager: 0,
+          GuildStickerManager: 0,
+        }),
+        sweepers: {
+          ...Options.DefaultSweeperSettings,
+          messages: {
+            interval: 120,
+            lifetime: 60,
+          },
+        },
       });
 
       // Attach prefix message listener (!dm, !status, !join, !leave, !fleet, etc.)

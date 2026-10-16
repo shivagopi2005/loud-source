@@ -868,28 +868,30 @@ export class BotCommandService {
         );
         const botsToJoin = userTier.maxBots ? workerBots.slice(0, userTier.maxBots) : workerBots;
 
-        // ALL WORKSPACE BOTS JOIN SIMULTANEOUSLY AT THE EXACT SAME TIME
-        await Promise.allSettled(
-          botsToJoin.map(async (b) => {
-            if (FleetGatewayService.isRedirectBot(b.id) || FleetGatewayService.isRedirectBot(b.application_id)) return;
-            const bClient = FleetGatewayService.getClient(b.id);
-            if (bClient) {
-              const bGuild = bClient.guilds.cache.get(targetGuild.id);
-              if (bGuild) {
-                try {
-                  joinVoiceChannel({
-                    channelId: voiceChannel.id,
-                    guildId: bGuild.id,
-                    adapterCreator: createCustomVoiceAdapter(bGuild),
-                    group: bClient.user?.id || b.id,
-                    selfDeaf: false,
-                    selfMute: false,
-                  });
-                } catch {}
-              }
+        // Connect workspace bots smoothly with 35ms micro-stagger to avoid gateway congestion
+        for (let i = 0; i < botsToJoin.length; i++) {
+          const b = botsToJoin[i];
+          if (FleetGatewayService.isRedirectBot(b.id) || FleetGatewayService.isRedirectBot(b.application_id)) continue;
+          const bClient = FleetGatewayService.getClient(b.id);
+          if (bClient) {
+            const bGuild = bClient.guilds.cache.get(targetGuild.id);
+            if (bGuild) {
+              try {
+                joinVoiceChannel({
+                  channelId: voiceChannel.id,
+                  guildId: bGuild.id,
+                  adapterCreator: createCustomVoiceAdapter(bGuild),
+                  group: bClient.user?.id || b.id,
+                  selfDeaf: false,
+                  selfMute: false,
+                });
+              } catch {}
             }
-          })
-        );
+          }
+          if (i < botsToJoin.length - 1) {
+            await new Promise((r) => setTimeout(r, 35));
+          }
+        }
 
         return;
       }

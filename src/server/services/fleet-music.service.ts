@@ -296,54 +296,57 @@ export class FleetMusicService {
     let connectedBotCount = 0;
     let totalBotsInGuild = 0;
 
-    await Promise.allSettled(
-      botsToConnect.map(async (b) => {
-        if (FleetGatewayService.isRedirectBot(b.id) || FleetGatewayService.isRedirectBot(b.application_id)) return;
-        const bClient = FleetGatewayService.getClient(b.id);
-        if (!bClient) return;
+    // Micro-stagger bot connections (35ms) to give Discord Gateway clean bandwidth and prevent socket collision
+    for (let i = 0; i < botsToConnect.length; i++) {
+      const b = botsToConnect[i];
+      if (FleetGatewayService.isRedirectBot(b.id) || FleetGatewayService.isRedirectBot(b.application_id)) continue;
+      const bClient = FleetGatewayService.getClient(b.id);
+      if (!bClient) continue;
 
-        const bGuild = bClient.guilds.cache.get(guildId);
-        if (!bGuild) return;
+      const bGuild = bClient.guilds.cache.get(guildId);
+      if (!bGuild) continue;
 
-        totalBotsInGuild++;
-        const botGroupId = bClient.user?.id || b.id;
+      totalBotsInGuild++;
+      const botGroupId = bClient.user?.id || b.id;
 
-        try {
-          let conn = getVoiceConnection(guildId, botGroupId);
+      try {
+        let conn = getVoiceConnection(guildId, botGroupId);
 
-          if (!conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
-            conn = joinVoiceChannel({
-              channelId: voiceChannelId,
-              guildId,
-              adapterCreator: createCustomVoiceAdapter(bGuild),
-              group: botGroupId,
-              selfDeaf: false,
-              selfMute: false,
-            });
-          } else if (conn.joinConfig.channelId !== voiceChannelId) {
-            // Move to target voice channel
-            conn = joinVoiceChannel({
-              channelId: voiceChannelId,
-              guildId,
-              adapterCreator: createCustomVoiceAdapter(bGuild),
-              group: botGroupId,
-              selfDeaf: false,
-              selfMute: false,
-            });
-          }
-
-          // Subscribe bot's voice connection to the shared guild player
-          conn.subscribe(state.player);
-          connectedBotCount++;
-        } catch (botConnErr: any) {
-          console.warn(`[FleetMusic] Bot ${botGroupId} voice join error:`, botConnErr.message);
+        if (!conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
+          conn = joinVoiceChannel({
+            channelId: voiceChannelId,
+            guildId,
+            adapterCreator: createCustomVoiceAdapter(bGuild),
+            group: botGroupId,
+            selfDeaf: false,
+            selfMute: false,
+          });
+        } else if (conn.joinConfig.channelId !== voiceChannelId) {
+          // Move to target voice channel
+          conn = joinVoiceChannel({
+            channelId: voiceChannelId,
+            guildId,
+            adapterCreator: createCustomVoiceAdapter(bGuild),
+            group: botGroupId,
+            selfDeaf: false,
+            selfMute: false,
+          });
         }
-      })
-    );
 
-    // 4. Spawn real-time ffmpeg PCM transcode pipeline at Top Resolution & Studio Master Quality
+        // Subscribe bot's voice connection to the shared guild player
+        conn.subscribe(state.player);
+        connectedBotCount++;
+      } catch (botConnErr: any) {
+        console.warn(`[FleetMusic] Bot ${botGroupId} voice join error:`, botConnErr.message);
+      }
+
+      if (i < botsToConnect.length - 1) {
+        await new Promise((r) => setTimeout(r, 35));
+      }
+    }
+
+    // 4. Spawn high-throughput ffmpeg PCM transcode pipeline with pre-buffer for zero-stutter playback
     const ffmpegProc = spawn('ffmpeg', [
-      '-re',
       '-reconnect',
       '1',
       '-reconnect_streamed',
@@ -357,7 +360,7 @@ export class FleetMusicService {
       '-i',
       resolved.streamUrl,
       '-af',
-      'aresample=resampler=soxr:precision=28:cutoff=1.000',
+      'aresample=48000',
       '-f',
       's16le',
       '-ar',
