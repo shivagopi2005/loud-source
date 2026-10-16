@@ -44,6 +44,81 @@ export class FleetGatewayService {
   }
 
   /**
+   * Determine whether a Client, bot ID, application ID, or token belongs to
+   * the dedicated Redirect / OAuth Application bot.
+   * The Redirect bot is strictly reserved for Discord OAuth authentication and !premium commands,
+   * and is completely excluded from DM blasts, channel spam, and worker raids.
+   */
+  public static isRedirectBot(identifier: Client | string | null | undefined): boolean {
+    if (!identifier) return false;
+
+    const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim();
+    const redirectBotId = process.env.REDIRECT_BOT_ID?.trim();
+
+    // 1. Check if passed a Discord.js Client instance
+    if (typeof identifier === 'object' && 'user' in identifier) {
+      const clientId = identifier.user?.id;
+      if (clientId && (clientId === redirectClientId || clientId === redirectBotId)) {
+        return true;
+      }
+      return false;
+    }
+
+    // 2. Check if passed a string (can be application_id, DB bot ID, Discord snowflake, or token)
+    if (typeof identifier === 'string') {
+      const trimmed = identifier.trim();
+      if (!trimmed) return false;
+
+      if (redirectClientId && trimmed === redirectClientId) return true;
+      if (redirectBotId && trimmed === redirectBotId) return true;
+
+      // Check token if base64 extractable
+      try {
+        const firstSegment = trimmed.split('.')[0];
+        if (firstSegment && firstSegment.length >= 16) {
+          const decoded = Buffer.from(firstSegment, 'base64').toString('utf8');
+          if (decoded && (decoded === redirectClientId || decoded === redirectBotId)) {
+            return true;
+          }
+        }
+      } catch {}
+
+      // Check active connections map by botId or applicationId
+      const conn = this.connections.get(trimmed);
+      if (conn) {
+        if (redirectClientId && (conn.applicationId === redirectClientId || conn.client?.user?.id === redirectClientId)) {
+          return true;
+        }
+        if (redirectBotId && (conn.applicationId === redirectBotId || conn.client?.user?.id === redirectBotId)) {
+          return true;
+        }
+      }
+
+      // Check if any connection matches
+      for (const c of this.connections.values()) {
+        if (c.botId === trimmed || c.applicationId === trimmed || c.client?.user?.id === trimmed) {
+          if (redirectClientId && (c.applicationId === redirectClientId || c.client?.user?.id === redirectClientId)) {
+            return true;
+          }
+          if (redirectBotId && (c.applicationId === redirectBotId || c.client?.user?.id === redirectBotId)) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Retrieve all active Discord Clients across the fleet EXCEPT the protected Redirect/OAuth bot.
+   * Used for all DM, spam, and fleet operations to keep the OAuth bot safe.
+   */
+  public static getWorkerClients(): Client[] {
+    return this.getAllClients().filter((client) => !this.isRedirectBot(client));
+  }
+
+  /**
    * Retrieve all active Discord Clients across the fleet.
    */
   public static getAllClients(): Client[] {
@@ -127,11 +202,14 @@ export class FleetGatewayService {
         client.once('ready', async () => {
           clearTimeout(timeout);
           try {
+            const isRedirect = FleetGatewayService.isRedirectBot(client) || FleetGatewayService.isRedirectBot(botId);
             client.user?.setPresence({
               status: 'online',
               activities: [
                 {
-                  name: 'Studio Voice Fleet • !help',
+                  name: isRedirect
+                    ? 'OAuth & Premium Manager • !premium'
+                    : 'Studio Voice Fleet • !help',
                   type: ActivityType.Custom,
                 },
               ],

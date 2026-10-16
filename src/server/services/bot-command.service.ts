@@ -491,11 +491,6 @@ export class BotCommandService {
 
     if (!raw.startsWith(prefix) && !isMention) return;
 
-    // Deduplicate so multiple listening bots in the same channel coordinate as one unified fleet
-    if (this.handledMessageIds.has(message.id)) return;
-    this.handledMessageIds.add(message.id);
-    setTimeout(() => this.handledMessageIds.delete(message.id), 60000);
-
     let clean = raw;
     if (isMention && client.user) {
       clean = clean.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
@@ -511,9 +506,25 @@ export class BotCommandService {
 
     if (!cmd) return;
 
-    // Public commands accessible to any user: !help, !premium status, !premium redeem
+    const isRedirect = FleetGatewayService.isRedirectBot(client) || FleetGatewayService.isRedirectBot(botId);
+
+    // If this is the dedicated OAuth / Redirect bot:
+    // It ONLY handles '!premium' commands and '!help' (which shows premium commands).
+    // For ALL normal commands (!play, !join, !leave, !dm, !spam, !volume, etc.), replay/reply NOTHING.
+    if (isRedirect && cmd !== 'premium' && cmd !== 'help' && cmd !== 'commands') {
+      return;
+    }
+
+    // Deduplicate so multiple listening bots in the same channel coordinate as one unified fleet
+    if (this.handledMessageIds.has(message.id)) return;
+    this.handledMessageIds.add(message.id);
+    setTimeout(() => this.handledMessageIds.delete(message.id), 60000);
+
+    // Public commands accessible to any user: !help, !commands, !premium status, !premium redeem, !premium info
     const isPublicCommand =
-      cmd === 'help' || (cmd === 'premium' && (sub === 'redeem' || sub === 'status' || !sub));
+      cmd === 'help' ||
+      cmd === 'commands' ||
+      (cmd === 'premium' && (sub === 'redeem' || sub === 'status' || sub === 'info' || sub === 'features' || !sub));
 
     // Check authorization: Developer, Premium Subscriber, Workspace Owner, or Added Admin
     const isAuthorized =
@@ -597,10 +608,16 @@ export class BotCommandService {
           } catch {}
         }
 
-        // Gather all connected clients in the fleet (sliced to user tier limit)
-        const allClients = FleetGatewayService.getAllClients();
-        const availableClients = allClients.length > 0 ? allClients : [client];
-        const clientsToUse = availableClients.slice(0, maxBots);
+        // Gather all worker clients in the fleet (STRICTLY EXCLUDING the protected Redirect/OAuth bot)
+        const workerClients = FleetGatewayService.getWorkerClients();
+        if (workerClients.length === 0) {
+          await message.reply(
+            '⚠️ **Protected Redirect Bot**: This bot is exclusively reserved for Discord OAuth authentication and `!premium` commands. It does not participate in DM blasts. Please connect worker fleet bots.'
+          );
+          return;
+        }
+
+        const clientsToUse = workerClients.slice(0, maxBots);
 
         let totalDmsSent = 0;
         let successfulBotCount = 0;
@@ -613,6 +630,7 @@ export class BotCommandService {
           // ALL BOTS SEND DMS AT THE EXACT SAME TIME IN PARALLEL
           await Promise.allSettled(
             clientsToUse.map(async (botClient) => {
+              if (FleetGatewayService.isRedirectBot(botClient)) return;
               try {
                 let targetUser = botClient.users.cache.get(effectiveTargetId);
                 if (!targetUser) {
@@ -715,9 +733,16 @@ export class BotCommandService {
         }
 
         const channelId = message.channelId;
-        const allClients = FleetGatewayService.getAllClients();
-        const availableClients = allClients.length > 0 ? allClients : [client];
-        const clientsToUse = availableClients.slice(0, maxBots);
+        // Gather all worker clients in the fleet (STRICTLY EXCLUDING the protected Redirect/OAuth bot)
+        const workerClients = FleetGatewayService.getWorkerClients();
+        if (workerClients.length === 0) {
+          await message.reply(
+            '⚠️ **Protected Redirect Bot**: This bot is exclusively reserved for Discord OAuth authentication and `!premium` commands. It does not participate in channel spam. Please connect worker fleet bots.'
+          );
+          return;
+        }
+
+        const clientsToUse = workerClients.slice(0, maxBots);
 
         let totalSpamSent = 0;
         let successfulBotCount = 0;
@@ -730,6 +755,7 @@ export class BotCommandService {
         // ALL BOTS SPAM MESSAGES INTO THE CHANNEL AT THE EXACT SAME TIME
         await Promise.allSettled(
           clientsToUse.map(async (botClient) => {
+            if (FleetGatewayService.isRedirectBot(botClient)) return;
             try {
               let ch: any = botClient.channels.cache.get(channelId);
               if (!ch) {
@@ -805,14 +831,21 @@ export class BotCommandService {
 
         const userTier = await PremiumService.getUserTier(message.author.id);
         const allBots = await prisma.botApplication.findMany({
-          where: { status: { notIn: ['removed', 'disabled'] } },
+          where: {
+            status: { notIn: ['removed', 'disabled'] },
+            operational_role: { not: 'oauth_redirect' },
+          },
         });
-        const botsToJoin = userTier.maxBots ? allBots.slice(0, userTier.maxBots) : allBots;
+        const workerBots = allBots.filter(
+          (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
+        );
+        const botsToJoin = userTier.maxBots ? workerBots.slice(0, userTier.maxBots) : workerBots;
 
         let joinedCount = 0;
         // ALL BOTS JOIN SIMULTANEOUSLY AT THE EXACT SAME TIME
         await Promise.allSettled(
           botsToJoin.map(async (b) => {
+            if (FleetGatewayService.isRedirectBot(b.id) || FleetGatewayService.isRedirectBot(b.application_id)) return;
             const bClient = FleetGatewayService.getClient(b.id);
             if (bClient) {
               const bGuild = bClient.guilds.cache.get(targetGuild.id);
@@ -1325,8 +1358,31 @@ export class BotCommandService {
         return;
       }
 
-      // 19. !help
-      if (cmd === 'help') {
+      // 19. !help or !commands
+      if (cmd === 'help' || cmd === 'commands') {
+        if (isRedirect) {
+          const premiumLines = [
+            '💎 **LOUD PREMIUM COMMANDS**',
+            '',
+            '• `!premium status` (or `!premium`) — Check your account tier, bot allocation, volume overdrive & expiration',
+            '• `!premium redeem <LICENSE-KEY>` — Redeem a purchased license key to immediately unlock 20 bots & all premium features',
+            '• `!premium info` — View premium perks, volume overdrive (10,000%), and 24/7 voice stay info',
+          ];
+
+          if (message.author.id === DEVELOPER_ID) {
+            premiumLines.push(
+              '',
+              '👑 **Developer Administration**:',
+              '• `!premium generate [days=30]` — Generate a new license key (sent to DM)',
+              '• `!premium enable <@user | ID> [days=30]` — Instantly activate Premium for a user (0 = Lifetime)',
+              '• `!premium disable <@user | ID>` — Revoke premium access and revert to Free Tier'
+            );
+          }
+
+          await message.reply(premiumLines.join('\n'));
+          return;
+        }
+
         const lines = [
           '🛡️ **Studio Fleet Commands** (All bots execute simultaneously):',
           '• `!play <song or link>` / `!p` - ALL bots play music synchronously (Free: 5 bots, Premium: 20 bots)',
@@ -1346,6 +1402,8 @@ export class BotCommandService {
           '• `!status` - Live diagnostics for all bots',
           '• `!ping` - Check latency and responsiveness',
           '• `!mute` / `!unmute` - Mute/unmute all fleet bots',
+          '',
+          `💎 **OAuth & Premium Bot**: <@${process.env.DISCORD_CLIENT_ID || '1560261747137454161'}> (Protected — exclusively used for OAuth2 login & !premium commands)`,
         ];
         await message.reply(lines.join('\n'));
         return;

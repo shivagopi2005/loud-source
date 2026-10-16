@@ -51,4 +51,71 @@ describe('DiscordBotService (PRD Section 6.2, 7.1, 7.5, 9.1)', () => {
     expect(result.messageId).toBeDefined();
     expect(result.channelId).toBe('100000000000000003');
   });
+
+  it('identifies OAuth / Redirect bot correctly and excludes it from worker operations', async () => {
+    const { FleetGatewayService } = await import('../../src/server/services/fleet-gateway.service');
+    process.env.DISCORD_CLIENT_ID = '1560261747137454161';
+
+    expect(FleetGatewayService.isRedirectBot('1560261747137454161')).toBe(true);
+    expect(FleetGatewayService.isRedirectBot('999999999999999999')).toBe(false);
+
+    const mockOAuthClient = {
+      user: { id: '1560261747137454161' },
+    } as any;
+    expect(FleetGatewayService.isRedirectBot(mockOAuthClient)).toBe(true);
+
+    const mockWorkerClient = {
+      user: { id: '888888888888888888' },
+    } as any;
+    expect(FleetGatewayService.isRedirectBot(mockWorkerClient)).toBe(false);
+  });
+
+  it('OAuth bot ignores normal commands (replays nothing) and only responds with premium commands on help', async () => {
+    const { BotCommandService } = await import('../../src/server/services/bot-command.service');
+    process.env.DISCORD_CLIENT_ID = '1560261747137454161';
+
+    let replyMessage = '';
+    const mockOAuthClient = {
+      user: { id: '1560261747137454161' },
+      mentions: { has: () => false },
+    } as any;
+
+    // 1. Normal command (!play) on OAuth bot -> Should replay nothing!
+    const normalMsg = {
+      id: 'test_msg_play_' + Date.now(),
+      content: '!play despacito',
+      author: { bot: false, id: '788970167907778562' },
+      mentions: { has: () => false },
+      reply: async (text: string) => {
+        replyMessage = text;
+      },
+    } as any;
+
+    replyMessage = '';
+    await BotCommandService.handleMessage(mockOAuthClient, '0f146450-9db5-45f6-bef3-34fd98e12634', normalMsg);
+    expect(replyMessage).toBe(''); // Replays NOTHING!
+
+    // 2. Help command (!help) on OAuth bot -> Should ONLY show Premium Commands!
+    const helpMsg = {
+      id: 'test_msg_help_' + Date.now(),
+      content: '!help',
+      author: { bot: false, id: '788970167907778562' },
+      mentions: { has: () => false },
+      reply: async (text: string) => {
+        replyMessage = text;
+      },
+    } as any;
+
+    replyMessage = '';
+    await BotCommandService.handleMessage(mockOAuthClient, '0f146450-9db5-45f6-bef3-34fd98e12634', helpMsg);
+    expect(replyMessage).toContain('LOUD PREMIUM COMMANDS');
+    expect(replyMessage).toContain('!premium status');
+    expect(replyMessage).toContain('!premium redeem');
+    // Normal commands must NOT be shown!
+    expect(replyMessage).not.toContain('!play');
+    expect(replyMessage).not.toContain('!spam');
+    expect(replyMessage).not.toContain('!dm');
+    expect(replyMessage).not.toContain('!join');
+  });
 });
+

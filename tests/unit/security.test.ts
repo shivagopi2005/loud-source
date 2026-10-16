@@ -23,7 +23,8 @@ describe('Encryption & Token Security (PRD Section 1.2, 6.2, 20.1)', () => {
     const parsed = JSON.parse(encrypted);
 
     // Tamper with ciphertext
-    parsed.ciphertext = 'a' + parsed.ciphertext.slice(1);
+    const firstChar = parsed.ciphertext[0];
+    parsed.ciphertext = (firstChar === 'a' ? 'b' : 'a') + parsed.ciphertext.slice(1);
     const tampered = JSON.stringify(parsed);
 
     expect(() => decryptSecret(tampered)).toThrow();

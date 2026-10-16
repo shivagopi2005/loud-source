@@ -19,6 +19,21 @@ export function startWorkers(): { messageWorker: Worker; healthWorker: Worker } 
         data: { state: 'sending', attempt_count: { increment: 1 } },
       });
 
+      // Prevent protected Redirect/OAuth bot from sending mass/job messages
+      const { FleetGatewayService } = await import('../services/fleet-gateway.service');
+      if (FleetGatewayService.isRedirectBot(botId)) {
+        console.warn(`[MessageWorker] Blocked message job ${job.id}: Bot ${botId} is protected OAuth bot`);
+        await prisma.messageJob.update({
+          where: { id: messageJobId },
+          data: {
+            state: 'failed',
+            result_code: 'OAUTH_BOT_PROTECTED',
+            completed_at: new Date(),
+          },
+        });
+        return { success: false, error: 'OAuth Redirect bot is protected from mass message jobs' };
+      }
+
       // Fetch bot credential
       const credential = await prisma.botCredential.findFirst({
         where: { bot_id: botId, status: 'active' },
