@@ -66,6 +66,81 @@ interface UpdateResultItem {
   error?: string;
 }
 
+/**
+ * Resizes and compresses an uploaded image file using an off-screen HTML5 canvas.
+ * - Discord avatar: max 512x512 px (< 80KB)
+ * - Discord banner: max 960x540 px (< 100KB)
+ * Prevents large Base64 strings from exceeding edge proxy limits or causing HTTP 500/502 HTML errors.
+ */
+function compressImageFile(
+  file: File,
+  maxWidth: number,
+  maxHeight: number,
+  quality: number = 0.85
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // If it's an animated GIF under 1MB, preserve frames
+    if (file.type === 'image/gif' && file.size < 1024 * 1024) {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (e) => reject(e);
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxWidth || height > maxHeight) {
+        const ratio = Math.min(maxWidth / width, maxHeight / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = (e) => reject(e);
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const exportType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+      try {
+        const dataUrl = canvas.toDataURL(exportType, quality);
+        resolve(dataUrl);
+      } catch {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = (e) => reject(e);
+        reader.readAsDataURL(file);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Failed to load image file. Please ensure it is a valid PNG, JPEG, or GIF.'));
+    };
+
+    img.src = objectUrl;
+  });
+}
+
 export default function BotProfilesPage() {
   const { currentWorkspace } = useWorkspace();
 
@@ -131,6 +206,12 @@ export default function BotProfilesPage() {
     }
     try {
       const res = await fetch(`/api/workspaces/${currentWorkspace.id}/bots/profile`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.warn('[BotProfiles] Non-JSON response received from profiles GET endpoint, status:', res.status);
+        setIsLoading(false);
+        return;
+      }
       const data = await res.json();
       if (res.ok && data.data?.bots) {
         setBots(data.data.bots);
@@ -231,44 +312,68 @@ export default function BotProfilesPage() {
     applyPresetToEditor(preset);
   };
 
-  // Handle image file upload to Base64
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'avatar' | 'banner') => {
+  // Handle image file upload with off-screen canvas compression
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'avatar' | 'banner') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 8 * 1024 * 1024) {
-      setStatusMessage({ type: 'error', text: 'Image file size must be less than 8MB.' });
+    if (file.size > 15 * 1024 * 1024) {
+      setStatusMessage({ type: 'error', text: 'Image file size must be less than 15MB.' });
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
+    try {
+      const maxW = target === 'avatar' ? 512 : 960;
+      const maxH = target === 'avatar' ? 512 : 540;
+      const compressedDataUrl = await compressImageFile(file, maxW, maxH, 0.85);
+
       if (target === 'avatar') {
-        setAvatarUrl(result);
+        setAvatarUrl(compressedDataUrl);
         setIsAvatarUrlInputOpen(false);
       }
       if (target === 'banner') {
-        setBannerUrl(result);
+        setBannerUrl(compressedDataUrl);
         setIsBannerUrlInputOpen(false);
       }
-    };
-    reader.readAsDataURL(file);
+      setStatusMessage({
+        type: 'success',
+        text: `Image optimized and ready (${target === 'avatar' ? '512x512' : '960x540'}). Click "Apply to Bots" to save.`,
+      });
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err?.message || 'Failed to process image file.' });
+    }
   };
 
   // Submit profile updates to backend API
   const handleSaveProfiles = async (isRandomBulk: boolean = false) => {
     if (!currentWorkspace?.id) return;
-    setIsSaving(true);
-    setStatusMessage(null);
-    setSaveResults(null);
 
     const targetBotIds =
       targetScope === 'single'
-        ? [selectedBotId]
+        ? (selectedBotId ? [selectedBotId] : [])
         : targetScope === 'selected'
         ? Array.from(selectedBotIds)
         : [];
+
+    if (targetScope !== 'all' && targetBotIds.length === 0) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Please select at least one bot to update.',
+      });
+      return;
+    }
+
+    if (targetScope === 'single' && (!selectedBotId || !bots.some((b) => b.id === selectedBotId))) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Please select a valid bot from your fleet.',
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    setStatusMessage(null);
+    setSaveResults(null);
 
     const payload: any = {
       targetMode: targetScope,
@@ -337,13 +442,37 @@ export default function BotProfilesPage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get('content-type') || '';
+      let data: any = {};
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        if (res.status === 413) {
+          throw new Error('Image size too large for proxy/server. Image was compressed; please re-select or use a smaller image.');
+        } else if (res.status === 403) {
+          throw new Error('Access denied: You can only modify bots belonging to your own workspace.');
+        } else if (res.status >= 500) {
+          throw new Error(`Server or proxy returned status ${res.status}. Please check your connection or try again.`);
+        } else {
+          throw new Error(`Server returned status ${res.status}: ${text.slice(0, 100)}`);
+        }
+      }
+
       if (!res.ok) {
         throw new Error(data.error?.message || 'Failed to update profiles');
       }
 
       if (data.data?.results) {
         setSaveResults(data.data.results);
+      }
+
+      if (data.data?.totalTargeted === 0) {
+        setStatusMessage({
+          type: 'warning',
+          text: 'No eligible bots were updated. You can only modify bots belonging to your own workspace.',
+        });
+        return;
       }
 
       const rateLimited = (data.data?.rateLimitedCount || 0) > 0;
@@ -363,7 +492,7 @@ export default function BotProfilesPage() {
         await fetchProfiles();
       }
     } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message });
+      setStatusMessage({ type: 'error', text: err.message || 'An unexpected error occurred while updating profiles.' });
     } finally {
       setIsSaving(false);
     }

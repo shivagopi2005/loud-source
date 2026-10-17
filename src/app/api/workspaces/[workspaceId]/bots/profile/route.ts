@@ -51,7 +51,32 @@ export async function GET(
 ) {
   try {
     const { workspaceId } = await params;
-    await authorizeWorkspaceMember(request, workspaceId);
+    const { user } = await authorizeWorkspaceMember(request, workspaceId);
+
+    const DEVELOPER_ID = '788970167907778562';
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { discord_id: true },
+    });
+    const isDeveloper = dbUser?.discord_id === DEVELOPER_ID;
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      include: { owner: true },
+    });
+
+    if (!workspace) {
+      return errorResponse('NOT_FOUND', 'Workspace not found', 404);
+    }
+
+    const isDeveloperWorkspace =
+      workspace.owner?.discord_id === DEVELOPER_ID ||
+      workspace.id === 'c5690896-c818-47f7-8577-eeedc4f05027';
+
+    // Non-developers can NEVER access developer fleet bot profiles
+    if (isDeveloperWorkspace && !isDeveloper) {
+      return errorResponse('FORBIDDEN', 'Access restricted to workspace owner.', 403);
+    }
 
     const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
 
@@ -80,12 +105,28 @@ export async function GET(
 
     const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
 
-    const workerBots = bots.filter(
+    let workerBots = bots.filter(
       (b) =>
         !FleetGatewayService.isRedirectBot(b.id) &&
         !FleetGatewayService.isRedirectBot(b.application_id) &&
         b.display_name !== 'Roynix Loud'
     );
+
+    // If caller is not developer, ensure developer fleet bots are NEVER returned
+    if (!isDeveloper) {
+      const devBots = await prisma.botApplication.findMany({
+        where: {
+          workspace: { owner: { discord_id: DEVELOPER_ID } },
+        },
+        select: { id: true, application_id: true },
+      });
+      const devBotIds = new Set(devBots.map((b) => b.id));
+      const devAppIds = new Set(devBots.map((b) => b.application_id).filter(Boolean));
+
+      workerBots = workerBots.filter(
+        (b) => !devBotIds.has(b.id) && !devAppIds.has(b.application_id)
+      );
+    }
 
     return okResponse({
       bots: workerBots.map((b) => ({
@@ -116,6 +157,33 @@ export async function POST(
   try {
     const { workspaceId } = await params;
     const { user } = await authorizeWorkspaceMember(request, workspaceId, 'bot:manage');
+
+    const DEVELOPER_ID = '788970167907778562';
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { discord_id: true },
+    });
+    const isDeveloper = dbUser?.discord_id === DEVELOPER_ID;
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      include: { owner: true },
+    });
+
+    if (!workspace) {
+      return errorResponse('NOT_FOUND', 'Workspace not found', 404);
+    }
+
+    const isDeveloperWorkspace =
+      workspace.owner?.discord_id === DEVELOPER_ID ||
+      workspace.id === 'c5690896-c818-47f7-8577-eeedc4f05027';
+
+    // A user can ONLY modify their own bots in their own workspace
+    // Developer fleet bots can only be modified by the platform developer
+    if (isDeveloperWorkspace && !isDeveloper) {
+      return errorResponse('FORBIDDEN', 'Only the platform developer can modify developer fleet bot profiles.', 403);
+    }
+
     const body = await request.json();
     const data = UpdateProfileSchema.parse(body);
 
@@ -126,6 +194,8 @@ export async function POST(
     const result = await BotProfileService.updateProfiles({
       workspaceId,
       actorUserId: user.userId,
+      actorDiscordId: dbUser?.discord_id,
+      isDeveloper,
       targetMode: data.targetMode,
       botIds: data.botIds,
       applyOptions: data.applyOptions,

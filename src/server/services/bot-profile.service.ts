@@ -9,6 +9,8 @@ import { BotProfilePresets, ProfilePreset, createPngFromHex } from './bot-profil
 export interface UpdateProfilePayload {
   workspaceId: string;
   actorUserId?: string;
+  actorDiscordId?: string;
+  isDeveloper?: boolean;
   targetMode: 'single' | 'selected' | 'all';
   botIds?: string[];
   applyOptions?: {
@@ -155,6 +157,8 @@ export class BotProfileService {
         updateName: true,
       },
       actorUserId,
+      actorDiscordId,
+      isDeveloper = false,
     } = payload;
 
     const shouldApplyAvatar = applyOptions.updateAvatar ?? true;
@@ -199,6 +203,23 @@ export class BotProfileService {
 
     // Permanently protect OAuth bot: never modify its username, name, bio, avatar, or banner
     botsToUpdate = botsToUpdate.filter((b) => !isRedirectBot(b));
+
+    // Permanently protect Developer Fleet bots: non-developers can NEVER modify developer bots
+    if (!isDeveloper) {
+      const DEVELOPER_ID = '788970167907778562';
+      const devBots = await prisma.botApplication.findMany({
+        where: {
+          workspace: { owner: { discord_id: DEVELOPER_ID } },
+        },
+        select: { id: true, application_id: true },
+      });
+      const devBotIds = new Set(devBots.map((b) => b.id));
+      const devAppIds = new Set(devBots.map((b) => b.application_id).filter(Boolean));
+
+      botsToUpdate = botsToUpdate.filter(
+        (b) => !devBotIds.has(b.id) && !devAppIds.has(b.application_id)
+      );
+    }
 
     if (botsToUpdate.length === 0) {
       return {
