@@ -21,7 +21,7 @@ function getBaseUrl(request: NextRequest): string {
     return origin;
   }
 
-  return 'https://eugene-holding-diverse-stack.trycloudflare.com';
+  return 'https://envelope-recoup-overvalue.ngrok-free.dev';
 }
 
 export async function GET(request: NextRequest) {
