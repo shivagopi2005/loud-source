@@ -124,6 +124,60 @@ export class FleetGatewayService {
   }
 
   /**
+   * Determine whether a bot belongs to the developer fleet (owned by DEVELOPER_ID).
+   * Developer bots are strictly protected: other users CANNOT disconnect them.
+   */
+  public static async isDeveloperBot(botIdOrAppId: string, applicationId?: string): Promise<boolean> {
+    const DEVELOPER_ID = '788970167907778562';
+    if (!botIdOrAppId && !applicationId) return false;
+
+    // 1. Is redirect bot
+    if (this.isRedirectBot(botIdOrAppId) || (applicationId && this.isRedirectBot(applicationId))) {
+      return true;
+    }
+
+    // 2. Check in database if this bot belongs to developer's workspace
+    try {
+      const devBots = await prisma.botApplication.findMany({
+        where: {
+          OR: [
+            { id: botIdOrAppId },
+            ...(applicationId ? [{ application_id: applicationId }] : [{ application_id: botIdOrAppId }]),
+            ...(applicationId ? [{ verified_bot_user_id: applicationId }] : [{ verified_bot_user_id: botIdOrAppId }]),
+          ],
+        },
+        include: {
+          workspace: {
+            include: { owner: true },
+          },
+        },
+      });
+
+      for (const b of devBots) {
+        if (b.workspace?.owner?.discord_id === DEVELOPER_ID) {
+          return true;
+        }
+      }
+
+      // Check if the application_id matches any bot owned by DEVELOPER_ID in any workspace
+      const targetAppId = devBots[0]?.application_id || applicationId || botIdOrAppId;
+      if (targetAppId) {
+        const devOwned = await prisma.botApplication.findFirst({
+          where: {
+            application_id: targetAppId,
+            workspace: { owner: { discord_id: DEVELOPER_ID } },
+          },
+        });
+        if (devOwned) return true;
+      }
+    } catch (err) {
+      console.warn('[FleetGateway] isDeveloperBot check error:', err);
+    }
+
+    return false;
+  }
+
+  /**
    * Retrieve all active Discord Clients across the fleet EXCEPT the protected Redirect/OAuth bot.
    * Used for all DM, spam, and fleet operations to keep the OAuth bot safe.
    */
@@ -425,9 +479,10 @@ export class FleetGatewayService {
               ],
             });
 
+            const botUserId = client.user?.id || '';
             this.connections.set(botId, {
               botId,
-              applicationId: client.user?.id || '',
+              applicationId: botUserId,
               displayName: client.user?.username || '',
               client,
               status: 'connected',
@@ -436,10 +491,18 @@ export class FleetGatewayService {
               pingMs: client.ws.ping >= 0 ? client.ws.ping : 25,
             });
 
-            await prisma.botApplication.update({
-              where: { id: botId },
-              data: { status: 'connected', last_health_check_at: new Date() },
-            });
+            // Sync all bot applications sharing this application ID / user ID to connected
+            try {
+              await prisma.botApplication.updateMany({
+                where: {
+                  OR: [
+                    { id: botId },
+                    ...(botUserId ? [{ application_id: botUserId }, { verified_bot_user_id: botUserId }] : []),
+                  ],
+                },
+                data: { status: 'connected', last_health_check_at: new Date() },
+              });
+            } catch {}
 
             console.log(`[FleetGateway] Bot ${client.user?.tag} (${botId}) is now ONLINE in Discord (!prefix commands enabled)`);
 
@@ -512,30 +575,91 @@ export class FleetGatewayService {
 
   /**
    * Disconnect a single bot from Discord Gateway.
-   * Protects Roynix Loud from being disconnected unless force is explicitly requested.
+   * Protects Roynix Loud and Developer bots from being disconnected by non-developers.
+   * Synchronizes offline status across all workspaces sharing the same bot token/application ID.
    */
-  public static async disconnectBot(botId: string, force: boolean = false): Promise<void> {
+  public static async disconnectBot(
+    botId: string,
+    force: boolean = false,
+    actorDiscordId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const DEVELOPER_ID = '788970167907778562';
+    const isDev = await this.isDeveloperBot(botId);
+
+    if (isDev && !force && actorDiscordId !== DEVELOPER_ID) {
+      console.warn(`[FleetGateway] Disconnect blocked: Bot ${botId} is a developer bot and actor is ${actorDiscordId}`);
+      return {
+        success: false,
+        error: 'Developer bot tokens cannot be taken offline by other users. Only the developer (788970167907778562) can make developer bots offline.',
+      };
+    }
+
     if (!force && this.isRedirectBot(botId)) {
       console.log(`[FleetGateway] Bot ${botId} is Roynix Loud (OAuth Redirect) — staying always online.`);
-      return;
+      return { success: true };
     }
 
-    const conn = this.connections.get(botId);
-    if (conn) {
-      if (conn.client) {
-        try {
-          conn.client.destroy();
-        } catch {}
+    // Look up bot record to find application_id and verified_bot_user_id
+    const bot = await prisma.botApplication.findUnique({
+      where: { id: botId },
+      select: { id: true, application_id: true, verified_bot_user_id: true, workspace_id: true },
+    });
+
+    const targetAppIds = new Set<string>();
+    if (bot?.application_id) targetAppIds.add(bot.application_id);
+    if (bot?.verified_bot_user_id) targetAppIds.add(bot.verified_bot_user_id);
+
+    // Destroy all matching client connections
+    const connsToRemove: string[] = [];
+    for (const [id, conn] of this.connections.entries()) {
+      const match =
+        id === botId ||
+        (conn.applicationId && targetAppIds.has(conn.applicationId)) ||
+        (conn.client?.user?.id && targetAppIds.has(conn.client.user.id));
+
+      if (match) {
+        if (conn.client) {
+          try {
+            conn.client.destroy();
+          } catch {}
+        }
+        connsToRemove.push(id);
       }
-      this.connections.delete(botId);
     }
+
+    for (const id of connsToRemove) {
+      this.connections.delete(id);
+    }
+
+    // Update DB status for ALL bot applications sharing this application ID across all workspaces
+    const whereOr: any[] = [{ id: botId }];
+    if (bot?.application_id) whereOr.push({ application_id: bot.application_id });
+    if (bot?.verified_bot_user_id) whereOr.push({ verified_bot_user_id: bot.verified_bot_user_id });
 
     try {
-      await prisma.botApplication.update({
-        where: { id: botId },
+      await prisma.botApplication.updateMany({
+        where: { OR: whereOr },
         data: { status: 'ready' },
       });
     } catch {}
+
+    // Realtime broadcast to all affected workspaces
+    try {
+      const { realtimeBroadcaster } = await import('../realtime/events');
+      const affectedWorkspaces = await prisma.botApplication.findMany({
+        where: { OR: whereOr },
+        select: { workspace_id: true, id: true },
+      });
+      for (const aw of affectedWorkspaces) {
+        realtimeBroadcaster.broadcast(aw.workspace_id, 'bot.disconnected', {
+          botId: aw.id,
+          online: false,
+          status: 'ready',
+        });
+      }
+    } catch {}
+
+    return { success: true };
   }
 
   /**
@@ -594,22 +718,26 @@ export class FleetGatewayService {
 
   /**
    * Disconnect all active worker bots in a workspace.
-   * Roynix Loud is strictly excluded and remains 100% online.
+   * Roynix Loud and Developer Bots are strictly protected if actor is not developer.
    */
-  public static async disconnectWorkspaceFleet(workspaceId: string): Promise<void> {
+  public static async disconnectWorkspaceFleet(workspaceId: string, actorDiscordId?: string): Promise<void> {
     const bots = await prisma.botApplication.findMany({
       where: {
         workspace_id: workspaceId,
         operational_role: { not: 'oauth_redirect' },
         application_id: { notIn: [process.env.DISCORD_CLIENT_ID?.trim() || '', '1560261747137454161'].filter(Boolean) },
       },
-      select: { id: true },
+      select: { id: true, application_id: true },
     });
 
     for (const b of bots) {
-      if (!this.isRedirectBot(b.id)) {
-        await this.disconnectBot(b.id);
+      if (this.isRedirectBot(b.id)) continue;
+      const isDev = await this.isDeveloperBot(b.id, b.application_id);
+      if (isDev && actorDiscordId !== '788970167907778562') {
+        console.log(`[FleetGateway] Skipped disconnecting developer bot ${b.id} during workspace fleet disconnect.`);
+        continue;
       }
+      await this.disconnectBot(b.id, false, actorDiscordId);
     }
   }
 
@@ -743,28 +871,78 @@ export class FleetGatewayService {
 
   /**
    * Check if a bot is currently online in Discord Gateway.
+   * Supports cross-workspace token sharing: if any connection matches the same application ID or bot user ID, it reports online.
    */
-  public static isBotOnline(botId: string): boolean {
-    const conn = this.connections.get(botId);
-    return !!(conn && conn.status === 'connected');
+  public static isBotOnline(botId: string, applicationId?: string, botUserId?: string): boolean {
+    const directConn = this.connections.get(botId);
+    if (directConn && directConn.status === 'connected' && (!directConn.client || directConn.client.isReady())) {
+      return true;
+    }
+
+    const targetIds = [applicationId, botUserId].filter(Boolean) as string[];
+    if (targetIds.length > 0) {
+      for (const conn of this.connections.values()) {
+        if (conn.status === 'connected' && (!conn.client || conn.client.isReady())) {
+          if (
+            targetIds.includes(conn.applicationId) ||
+            (conn.client?.user?.id && targetIds.includes(conn.client.user.id))
+          ) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   /**
    * Check if a bot client is connected and present in a specific guild.
    */
-  public static isBotInGuild(botId: string, guildId: string): boolean {
-    const conn = this.connections.get(botId);
-    if (!conn?.client || !conn.client.isReady()) return false;
-    return conn.client.guilds.cache.has(guildId);
+  public static isBotInGuild(botId: string, guildId: string, applicationId?: string): boolean {
+    const directConn = this.connections.get(botId);
+    if (directConn?.client && directConn.client.isReady()) {
+      return directConn.client.guilds.cache.has(guildId);
+    }
+
+    if (applicationId) {
+      for (const conn of this.connections.values()) {
+        if (conn?.client && conn.client.isReady()) {
+          if (conn.applicationId === applicationId || conn.client.user?.id === applicationId) {
+            return conn.client.guilds.cache.has(guildId);
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   /**
    * Get all guild IDs that the connected bot client is currently in.
+   * Supports cross-workspace token sharing.
    */
-  public static getBotGuildIds(botId: string): string[] {
-    const conn = this.connections.get(botId);
-    if (!conn?.client || !conn.client.isReady()) return [];
-    return Array.from(conn.client.guilds.cache.keys());
+  public static getBotGuildIds(botId: string, applicationId?: string, botUserId?: string): string[] {
+    const directConn = this.connections.get(botId);
+    if (directConn?.client && directConn.client.isReady()) {
+      return Array.from(directConn.client.guilds.cache.keys());
+    }
+
+    const targetIds = [applicationId, botUserId].filter(Boolean) as string[];
+    if (targetIds.length > 0) {
+      for (const conn of this.connections.values()) {
+        if (conn?.client && conn.client.isReady()) {
+          if (
+            targetIds.includes(conn.applicationId) ||
+            (conn.client?.user?.id && targetIds.includes(conn.client.user.id))
+          ) {
+            return Array.from(conn.client.guilds.cache.keys());
+          }
+        }
+      }
+    }
+
+    return [];
   }
 
   /**

@@ -78,6 +78,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (err) {
       console.error('[WorkspaceProvider] Failed to load session:', err);
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
     } finally {
       setIsLoading(false);
     }

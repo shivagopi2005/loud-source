@@ -23,7 +23,7 @@ export async function GET(
 ) {
   try {
     const { workspaceId } = await params;
-    await authorizeWorkspaceMember(request, workspaceId);
+    const { user } = await authorizeWorkspaceMember(request, workspaceId);
 
     const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
 
@@ -34,17 +34,44 @@ export async function GET(
 
     const { PremiumService } = await import('@/server/services/premium.service');
     const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
-    const userTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
-    const isFreeTier = !userTier.isDeveloper && (userTier.tier === 'trial' || userTier.tier === 'free');
+
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { discord_id: true },
+    });
+
+    const ownerTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
+    const sessionTier = await PremiumService.getUserTier(dbUser?.discord_id || '');
+
+    const TIER_RANKS: Record<string, number> = {
+      trial: 0,
+      free: 0,
+      community: 1,
+      pro: 2,
+      premium: 2,
+      enterprise: 3,
+      developer: 4,
+    };
+
+    const bestRank = Math.max(
+      TIER_RANKS[ownerTier.tier] ?? 0,
+      TIER_RANKS[sessionTier.tier] ?? 0,
+      TIER_RANKS[workspace?.plan_id || ''] ?? 0,
+      ownerTier.isDeveloper || sessionTier.isDeveloper ? 4 : 0
+    );
+
+    const isFreeTier = bestRank === 0;
 
     let bots: any[] = [];
     let isAllocatedDeveloperFleet = false;
 
     if (isFreeTier) {
-      // Free Tier accounts are pre-allocated 5 Developer Fleet Bots
+      // Free Tier accounts are pre-allocated 5 Developer Fleet Bots ONLY
       bots = await FleetGatewayService.getFreeTierDeveloperBots();
       isAllocatedDeveloperFleet = true;
     } else {
+      // Paid accounts only see their own custom bot applications.
+      // NEVER inject developer fleet bots into paid accounts!
       bots = await prisma.botApplication.findMany({
         where: {
           workspace_id: workspaceId,
@@ -78,11 +105,6 @@ export async function GET(
         },
         orderBy: { created_at: 'desc' },
       });
-
-      if (bots.length === 0) {
-        bots = await FleetGatewayService.getFreeTierDeveloperBots();
-        isAllocatedDeveloperFleet = true;
-      }
     }
 
     const workerBots = bots.filter(
@@ -95,9 +117,9 @@ export async function GET(
 
     return okResponse(
       workerBots.map((b) => {
-        const isOnline = FleetGatewayService.isBotOnline(b.id);
+        const isOnline = FleetGatewayService.isBotOnline(b.id, b.application_id, b.verified_bot_user_id);
         const hasToken = (b.credentials && b.credentials.length > 0) || isAllocatedDeveloperFleet;
-        const liveGuildIds = FleetGatewayService.getBotGuildIds(b.id);
+        const liveGuildIds = FleetGatewayService.getBotGuildIds(b.id, b.application_id, b.verified_bot_user_id);
         return {
           id: b.id,
           applicationId: b.application_id,
@@ -153,23 +175,80 @@ export async function POST(
     const { workspaceId } = await params;
     const { user } = await authorizeWorkspaceMember(request, workspaceId, 'bot:register');
 
-    // Free Tier restriction: Free tier accounts cannot add bots!
+    // Plan tier and quota validation
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
       include: { owner: true },
     });
     const { PremiumService } = await import('@/server/services/premium.service');
-    const userTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
-    if (!userTier.isDeveloper && (userTier.tier === 'trial' || userTier.tier === 'free')) {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { discord_id: true },
+    });
+    const ownerTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
+    const sessionTier = await PremiumService.getUserTier(dbUser?.discord_id || '');
+
+    const TIER_RANKS: Record<string, number> = {
+      trial: 0,
+      free: 0,
+      community: 1,
+      pro: 2,
+      premium: 2,
+      enterprise: 3,
+      developer: 4,
+    };
+
+    const bestRank = Math.max(
+      TIER_RANKS[ownerTier.tier] ?? 0,
+      TIER_RANKS[sessionTier.tier] ?? 0,
+      TIER_RANKS[workspace?.plan_id || ''] ?? 0,
+      ownerTier.isDeveloper || sessionTier.isDeveloper ? 4 : 0
+    );
+
+    const isFreeTier = bestRank === 0;
+
+    if (isFreeTier) {
       return errorResponse(
         'FREE_TIER_BOT_RESTRICTION',
-        'Users on the Free Community Trial cannot register custom bot tokens. You have been allocated 5 Developer Fleet Bots to use for free. Upgrade to Pro or Enterprise to connect custom bots.',
+        'Users on the Free Community Trial cannot register custom bot tokens. You have been allocated 5 Developer Fleet Bots to use for free. Upgrade to Community, Pro, or Enterprise to connect custom bots.',
         403
       );
     }
 
+    const maxBots = bestRank >= 3 ? 100 : bestRank === 2 ? 20 : 5;
+    const planName = bestRank >= 4 ? 'Developer' : bestRank === 3 ? 'Enterprise' : bestRank === 2 ? 'Pro' : 'Community';
+
+    const currentBotsCount = await prisma.botApplication.count({
+      where: {
+        workspace_id: workspaceId,
+        operational_role: { not: 'oauth_redirect' },
+      },
+    });
+
     const body = await request.json();
     const data = RegisterBotSchema.parse(body);
+
+    if (currentBotsCount >= maxBots) {
+      const resolvedAppId = data.applicationId;
+      const alreadyExists = resolvedAppId
+        ? await prisma.botApplication.findUnique({
+            where: {
+              workspace_id_application_id: {
+                workspace_id: workspaceId,
+                application_id: resolvedAppId,
+              },
+            },
+          })
+        : null;
+
+      if (!alreadyExists) {
+        return errorResponse(
+          'BOT_QUOTA_EXCEEDED',
+          `You have reached the maximum bot limit (${maxBots}) for your ${planName} plan. Upgrade your plan to add more bots.`,
+          403
+        );
+      }
+    }
 
     // 1. Verify Bot Token with Discord REST API & auto-resolve Application ID / Bot Name
     let verifiedIdentity;

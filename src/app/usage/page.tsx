@@ -106,6 +106,7 @@ export default function UsageAndBillingPage() {
   const isPro = (currentPlan === 'pro' || currentPlan === 'premium') && !isDeveloper;
   const isCommunity = currentPlan === 'community' && !isDeveloper;
   const isTrial = (currentPlan === 'trial' || currentPlan === 'free') && !isDeveloper && !isPro && !isEnterprise && !isCommunity;
+  const isMaxPlan = isEnterprise || isDeveloper;
 
   const botCount = usageData?.currentUsage?.registeredBots || 0;
   const botMax = usageData?.quotas?.maxBots || (isDeveloper || isEnterprise ? 100 : isPro ? 25 : 5);
@@ -497,7 +498,11 @@ export default function UsageAndBillingPage() {
           </div>
 
           <div className="text-[11px] text-muted-foreground flex items-center justify-between">
-            <span>No credit card required. Upgrades are managed via Discord.</span>
+            <span>
+              {isMaxPlan
+                ? 'Enterprise Max Plan Active: Maximum Studio capacity and 100 bots unlocked.'
+                : 'No credit card required. Upgrades are managed via Discord.'}
+            </span>
           </div>
         </div>
       </div>
@@ -560,7 +565,12 @@ export default function UsageAndBillingPage() {
                 {p.isCurrent ? (
                   <div className="w-full py-2.5 rounded-xl bg-secondary text-foreground/80 font-semibold text-xs border border-border flex items-center justify-center space-x-1.5 cursor-default">
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Active Workspace Tier</span>
+                    <span>{isMaxPlan ? 'Active Plan (Max Unlocked)' : 'Active Workspace Tier'}</span>
+                  </div>
+                ) : isMaxPlan ? (
+                  <div className="w-full py-2.5 rounded-xl bg-secondary/50 text-muted-foreground font-semibold text-xs border border-border flex items-center justify-center space-x-1.5 cursor-default">
+                    <Check className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Included in Max Plan</span>
                   </div>
                 ) : (
                   <a

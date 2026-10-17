@@ -22,7 +22,25 @@ export async function GET(request: NextRequest) {
 
   const discordAuthUrl = `https://discord.com/oauth2/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&scope=${scope}&state=${state}&prompt=consent`;
 
-  const response = NextResponse.redirect(discordAuthUrl);
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting to Discord...</title>
+  <meta http-equiv="refresh" content="0;url=${discordAuthUrl}">
+  <script>window.location.replace(${JSON.stringify(discordAuthUrl)});</script>
+</head>
+<body style="background:#0d0c14;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <p>Connecting to Discord OAuth2...</p>
+</body>
+</html>`;
+
+  const response = new NextResponse(html, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+    },
+  });
   // Store state and redirect URI in temporary cookies for validation in callback
   response.cookies.set('oauth_state', state, {
     httpOnly: true,

@@ -9,9 +9,15 @@ export async function POST(
 ) {
   try {
     const { workspaceId } = await params;
-    await authorizeWorkspaceMember(request, workspaceId, 'workspace:manage');
+    const { user } = await authorizeWorkspaceMember(request, workspaceId, 'workspace:manage');
 
-    await FleetGatewayService.disconnectWorkspaceFleet(workspaceId);
+    const { prisma } = await import('@/server/db/prisma');
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { discord_id: true },
+    });
+
+    await FleetGatewayService.disconnectWorkspaceFleet(workspaceId, dbUser?.discord_id || '');
 
     return okResponse({
       message: 'All workspace bots disconnected from Discord Gateway (Offline)',

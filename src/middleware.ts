@@ -32,6 +32,9 @@ export function middleware(request: NextRequest) {
   const sessionCookie = request.cookies.get('loud_session')?.value;
 
   if (!sessionCookie) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ success: false, error: 'UNAUTHORIZED' }, { status: 401 });
+    }
     const loginUrl = new URL('/login', request.url);
     return NextResponse.redirect(loginUrl);
   }
@@ -39,6 +42,11 @@ export function middleware(request: NextRequest) {
   // 4. Validate session JWT format (header.payload.signature)
   const parts = sessionCookie.split('.');
   if (parts.length !== 3) {
+    if (pathname.startsWith('/api/')) {
+      const res = NextResponse.json({ success: false, error: 'INVALID_SESSION' }, { status: 401 });
+      res.cookies.delete('loud_session');
+      return res;
+    }
     const loginUrl = new URL('/login', request.url);
     const response = NextResponse.redirect(loginUrl);
     response.cookies.delete('loud_session');

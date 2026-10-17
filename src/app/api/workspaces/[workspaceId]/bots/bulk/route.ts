@@ -23,20 +23,48 @@ export async function POST(
     const { workspaceId } = await params;
     const { user } = await authorizeWorkspaceMember(request, workspaceId, 'bot:register');
 
-    // Free Tier restriction: Free tier accounts cannot add bots!
+    // Plan tier and quota validation
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
       include: { owner: true },
     });
     const { PremiumService } = await import('@/server/services/premium.service');
-    const userTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
-    if (!userTier.isDeveloper && (userTier.tier === 'trial' || userTier.tier === 'free')) {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { discord_id: true },
+    });
+    const ownerTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
+    const sessionTier = await PremiumService.getUserTier(dbUser?.discord_id || '');
+
+    const TIER_RANKS: Record<string, number> = {
+      trial: 0,
+      free: 0,
+      community: 1,
+      pro: 2,
+      premium: 2,
+      enterprise: 3,
+      developer: 4,
+    };
+
+    const bestRank = Math.max(
+      TIER_RANKS[ownerTier.tier] ?? 0,
+      TIER_RANKS[sessionTier.tier] ?? 0,
+      TIER_RANKS[workspace?.plan_id || ''] ?? 0,
+      ownerTier.isDeveloper || sessionTier.isDeveloper ? 4 : 0
+    );
+
+    const isFreeTier = bestRank === 0;
+
+    if (isFreeTier) {
       return errorResponse(
         'FREE_TIER_BOT_RESTRICTION',
-        'Users on the Free Community Trial cannot register custom bot tokens. You have been allocated 5 Developer Fleet Bots to use for free. Upgrade to Pro or Enterprise to connect custom bots.',
+        'Users on the Free Community Trial cannot register custom bot tokens. You have been allocated 5 Developer Fleet Bots to use for free. Upgrade to Community, Pro, or Enterprise to connect custom bots.',
         403
       );
     }
+
+    const maxBots = bestRank >= 3 ? 100 : bestRank === 2 ? 20 : 5;
+    const planName = bestRank >= 4 ? 'Developer' : bestRank === 3 ? 'Enterprise' : bestRank === 2 ? 'Pro' : 'Community';
 
     const body = await request.json();
     const data = BulkRegisterSchema.parse(body);
@@ -59,6 +87,31 @@ export async function POST(
     // Limit maximum bulk batch size to 50
     if (rawTokens.length > 50) {
       return errorResponse('BULK_LIMIT_EXCEEDED', 'Maximum 50 bot tokens can be added in a single batch', 400);
+    }
+
+    // Check plan quota limits
+    const currentBotsCount = await prisma.botApplication.count({
+      where: {
+        workspace_id: workspaceId,
+        operational_role: { not: 'oauth_redirect' },
+      },
+    });
+
+    const availableSlots = Math.max(0, maxBots - currentBotsCount);
+    if (availableSlots <= 0) {
+      return errorResponse(
+        'BOT_QUOTA_EXCEEDED',
+        `You have reached the maximum bot limit (${maxBots}) for your ${planName} plan. Upgrade your plan to add more bots.`,
+        403
+      );
+    }
+
+    if (rawTokens.length > availableSlots) {
+      return errorResponse(
+        'BOT_QUOTA_EXCEEDED',
+        `Your ${planName} plan has only ${availableSlots} bot slot(s) remaining (Limit: ${maxBots}). Please reduce the batch size or upgrade.`,
+        403
+      );
     }
 
     const addedBots: any[] = [];

@@ -2,6 +2,7 @@
 import path from 'path';
 
 const nextConfig = {
+  compress: false,
   outputFileTracingRoot: path.resolve('.'),
   serverExternalPackages: [
     'discord.js',

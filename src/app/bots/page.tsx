@@ -30,7 +30,11 @@ import { getCachedData, setCachedData } from '@/lib/client-cache';
 function BotFleetContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentWorkspace } = useWorkspace();
+  const { currentWorkspace, currentUser } = useWorkspace();
+  const isMaxPlan =
+    currentWorkspace?.planId === 'enterprise' ||
+    currentWorkspace?.planId === 'developer' ||
+    currentUser?.discordId === '788970167907778562';
 
   const [bots, setBots] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -227,6 +231,9 @@ function BotFleetContent() {
       const res = await fetch(endpoint, { method: 'POST' });
       if (res.ok) {
         await loadBots();
+      } else {
+        const json = await res.json().catch(() => ({}));
+        alert(json.error?.message || json.message || 'Action failed');
       }
     } catch (err) {
       console.error('Bot toggle error:', err);
@@ -383,7 +390,7 @@ function BotFleetContent() {
       </div>
 
       {/* FREE TIER FLEET ALLOCATION BANNER */}
-      {isDeveloperAllocatedFleet && (
+      {isDeveloperAllocatedFleet && !isMaxPlan && (
         <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/10 via-primary/10 to-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400 mt-0.5">
@@ -608,29 +615,39 @@ function BotFleetContent() {
 
                 {/* Action buttons */}
                 <div className="pt-3 border-t border-border flex items-center justify-between">
-                  <button
-                    onClick={() => handleToggleSingleBot(bot.id, isBotOnline)}
-                    disabled={!bot.credential}
-                    className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
-                      !bot.credential
-                        ? 'opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border-border'
-                        : isBotOnline
-                        ? 'bg-secondary hover:bg-secondary/80 text-muted-foreground border-border'
-                        : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-600'
-                    }`}
-                  >
-                    {isBotOnline ? (
-                      <>
-                        <PowerOff className="w-3 h-3" />
-                        <span>Go Offline</span>
-                      </>
-                    ) : (
-                      <>
-                        <Power className="w-3 h-3" />
-                        <span>{!bot.credential ? 'No Token' : 'Go Online'}</span>
-                      </>
-                    )}
-                  </button>
+                  {bot.isDeveloperAllocated ? (
+                    <span
+                      title="Allocated Developer Fleet bots stay online for free tier testing"
+                      className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-default"
+                    >
+                      <Power className="w-3 h-3 text-emerald-400" />
+                      <span>Online (Managed)</span>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => handleToggleSingleBot(bot.id, isBotOnline)}
+                      disabled={!bot.credential}
+                      className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                        !bot.credential
+                          ? 'opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border-border'
+                          : isBotOnline
+                          ? 'bg-secondary hover:bg-secondary/80 text-muted-foreground border-border'
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-600'
+                      }`}
+                    >
+                      {isBotOnline ? (
+                        <>
+                          <PowerOff className="w-3 h-3" />
+                          <span>Go Offline</span>
+                        </>
+                      ) : (
+                        <>
+                          <Power className="w-3 h-3" />
+                          <span>{!bot.credential ? 'No Token' : 'Go Online'}</span>
+                        </>
+                      )}
+                    </button>
+                  )}
 
                   <div className="flex items-center space-x-2">
                     <button
@@ -722,7 +739,7 @@ function BotFleetContent() {
               </div>
             </div>
 
-            {isDeveloperAllocatedFleet && (
+            {isDeveloperAllocatedFleet && !isMaxPlan && (
               <div className="mb-4 p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex flex-col gap-2">
                 <div className="flex items-center gap-2 font-semibold text-amber-400">
                   <AlertTriangle className="w-4 h-4 shrink-0" />

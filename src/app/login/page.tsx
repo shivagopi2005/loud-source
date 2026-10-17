@@ -74,7 +74,11 @@ export default function LoginPage() {
     } catch {}
 
     // In production or if credentials provided, route securely through Discord OAuth
-    window.location.href = '/api/auth/discord';
+    if (typeof window !== 'undefined' && window.top) {
+      window.top.location.href = '/api/auth/discord';
+    } else {
+      window.location.href = '/api/auth/discord';
+    }
   };
 
   return (
@@ -308,6 +312,7 @@ export default function LoginPage() {
             {/* Discord OAuth Button (in place of Google) */}
             <a
               href="/api/auth/discord"
+              target="_top"
               className="flex items-center justify-center gap-2.5 py-3 px-3.5 rounded-xl border border-[#353249] bg-[#242232] hover:bg-[#2e2b3f] hover:border-[#5865F2]/60 text-white text-xs sm:text-sm font-medium transition cursor-pointer active:scale-[0.98] group"
               title="Authenticate with Discord OAuth2"
             >

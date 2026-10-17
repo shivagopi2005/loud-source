@@ -21,7 +21,27 @@ function getBaseUrl(request: NextRequest): string {
     return origin;
   }
 
-  return 'https://envelope-recoup-overvalue.ngrok-free.dev';
+  return 'https://loudstudio.wormhole.bar';
+}
+
+function htmlRedirect(url: string | URL, status: number = 200): NextResponse {
+  const target = url.toString();
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting...</title>
+  <meta http-equiv="refresh" content="0;url=${target}">
+  <script>window.location.replace(${JSON.stringify(target)});</script>
+</head>
+<body style="background:#0d0c14;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <p>Redirecting...</p>
+</body>
+</html>`;
+  return new NextResponse(html, {
+    status,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -34,13 +54,13 @@ export async function GET(request: NextRequest) {
   // CSRF validation: verify state if storedState is present in cookie
   if (storedState && state && state !== storedState) {
     console.warn('[OAuth2] State mismatch between param and cookie:', { state, storedState });
-    return NextResponse.redirect(
+    return htmlRedirect(
       new URL('/login?error=OAUTH_STATE_MISMATCH', baseUrl)
     );
   }
 
   if (!code) {
-    return NextResponse.redirect(
+    return htmlRedirect(
       new URL('/login?error=MISSING_AUTHORIZATION_CODE', baseUrl)
     );
   }
@@ -71,7 +91,7 @@ export async function GET(request: NextRequest) {
 
     if (!tokenResponse.ok) {
       console.error('[OAuth2] Token exchange error:', await tokenResponse.text());
-      return NextResponse.redirect(
+      return htmlRedirect(
         new URL('/login?error=DISCORD_TOKEN_EXCHANGE_FAILED', baseUrl)
       );
     }
@@ -85,7 +105,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!userRes.ok) {
-      return NextResponse.redirect(
+      return htmlRedirect(
         new URL('/login?error=DISCORD_USER_FETCH_FAILED', baseUrl)
       );
     }
@@ -205,7 +225,7 @@ export async function GET(request: NextRequest) {
       defaultWorkspaceId,
     });
 
-    const response = NextResponse.redirect(new URL('/', baseUrl));
+    const response = htmlRedirect(new URL('/', baseUrl));
     response.cookies.set(COOKIE_NAME, sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -284,7 +304,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (err: any) {
     console.error('[OAuth Callback Exception]:', err);
-    return NextResponse.redirect(
+    return htmlRedirect(
       new URL('/login?error=AUTHENTICATION_FAILED', baseUrl)
     );
   }
