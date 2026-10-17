@@ -11,7 +11,9 @@ export async function GET(request: NextRequest) {
     : request.nextUrl.origin;
 
   const rawRedirectUri =
-    process.env.DISCORD_REDIRECT_URI || `${inferredOrigin}/api/auth/discord/callback`;
+    inferredOrigin && !inferredOrigin.includes('localhost') && !inferredOrigin.includes('0.0.0.0')
+      ? `${inferredOrigin}/api/auth/discord/callback`
+      : process.env.DISCORD_REDIRECT_URI || `${inferredOrigin}/api/auth/discord/callback`;
   const redirectUri = encodeURIComponent(rawRedirectUri);
 
   // Generate secure OAuth2 state

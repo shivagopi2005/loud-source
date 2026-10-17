@@ -21,7 +21,7 @@ function getBaseUrl(request: NextRequest): string {
     return origin;
   }
 
-  return 'https://enter-depend-sent-illustrated.trycloudflare.com';
+  return 'https://eugene-holding-diverse-stack.trycloudflare.com';
 }
 
 export async function GET(request: NextRequest) {
