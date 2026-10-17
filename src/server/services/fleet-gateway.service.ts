@@ -30,10 +30,22 @@ export class FleetGatewayService {
 
   /**
    * Retrieve active Discord Client for a bot if currently connected.
+   * Matches by botId, applicationId, or Discord snowflake ID across workspaces.
    */
-  public static getClient(botId: string): Client | null {
+  public static getClient(botId: string, applicationId?: string): Client | null {
     const conn = this.connections.get(botId);
-    return conn?.client || null;
+    if (conn?.client) return conn.client;
+
+    const targetAppId = applicationId || botId;
+    for (const c of this.connections.values()) {
+      if (
+        (c.applicationId && (c.applicationId === targetAppId || c.applicationId === botId)) ||
+        (c.client?.user?.id && (c.client.user.id === targetAppId || c.client.user.id === botId))
+      ) {
+        if (c.client) return c.client;
+      }
+    }
+    return null;
   }
 
   /**

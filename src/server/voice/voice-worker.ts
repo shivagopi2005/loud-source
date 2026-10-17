@@ -18,6 +18,7 @@ import { FleetGatewayService } from '../services/fleet-gateway.service';
 export interface VoiceEndpointConfig {
   endpointId: string;
   botId: string;
+  applicationId?: string;
   botToken: string;
   guildId: string;
   channelId: string;
@@ -84,6 +85,7 @@ export function tuneResourceEncoder(resource: any): void {
 export class VoiceWorkerInstance {
   public readonly endpointId: string;
   public readonly botId: string;
+  public readonly applicationId?: string;
   public readonly guildId: string;
   public readonly channelId: string;
   private botToken: string;
@@ -108,6 +110,7 @@ export class VoiceWorkerInstance {
   constructor(config: VoiceEndpointConfig) {
     this.endpointId = config.endpointId;
     this.botId = config.botId;
+    this.applicationId = config.applicationId;
     this.botToken = config.botToken;
     this.guildId = config.guildId;
     this.channelId = config.channelId;
@@ -133,7 +136,7 @@ export class VoiceWorkerInstance {
 
     try {
       // Reuse existing active client from FleetGatewayService if available
-      const existingClient = FleetGatewayService.getClient(this.botId);
+      const existingClient = FleetGatewayService.getClient(this.botId, this.applicationId);
       if (existingClient && (existingClient.isReady() || existingClient.user)) {
         this.client = existingClient;
         this.ownsClient = false;

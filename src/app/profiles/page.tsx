@@ -32,6 +32,7 @@ import {
   Circle,
   Users,
   Type,
+  Lock,
 } from 'lucide-react';
 import { useWorkspace } from '@/components/providers/workspace-provider';
 import { getCachedData, setCachedData } from '@/lib/client-cache';
@@ -49,6 +50,11 @@ interface BotProfileItem {
   accentColor?: string | null;
   status: string;
   online: boolean;
+  canEditProfile?: boolean;
+  profileLocked?: boolean;
+  profileLockedReason?: string | null;
+  isOriginalOwner?: boolean;
+  originalOwnerUsername?: string | null;
 }
 
 interface UpdateResultItem {
@@ -64,6 +70,8 @@ interface UpdateResultItem {
   bannerRateLimited?: boolean;
   rateLimitMessage?: string;
   error?: string;
+  profileLocked?: boolean;
+  profileLockedReason?: string;
 }
 
 /**
@@ -190,6 +198,9 @@ export default function BotProfilesPage() {
     if (presetThemeFilter === 'all') return PROFILE_PRESETS;
     return PROFILE_PRESETS.filter((p) => p.theme === presetThemeFilter);
   }, [presetThemeFilter]);
+
+  const selectedBot = useMemo(() => bots.find((b) => b.id === selectedBotId), [bots, selectedBotId]);
+  const lockedBotsCount = useMemo(() => bots.filter((b) => b.profileLocked).length, [bots]);
 
   // Fetch all bots for workspace
   const fetchProfiles = async () => {
@@ -475,11 +486,27 @@ export default function BotProfilesPage() {
         return;
       }
 
+      const lockedCount = data.data?.lockedCount || 0;
       const rateLimited = (data.data?.rateLimitedCount || 0) > 0;
-      if (rateLimited) {
+      if (data.data.updatedCount === 0 && lockedCount > 0) {
+        setStatusMessage({
+          type: 'warning',
+          text: `${lockedCount} bot(s) skipped: profile & banner customization is reserved for the original bot owner. Voice streaming, song playback, and commands remain 100% active and unrestricted!`,
+        });
+      } else if (rateLimited && lockedCount > 0) {
+        setStatusMessage({
+          type: 'warning',
+          text: `Updated ${data.data.updatedCount} bot(s). Note: ${data.data.rateLimitedCount} bot(s) hit Discord cooldown, and ${lockedCount} bot(s) skipped (shared tokens - original owner retains profile customization).`,
+        });
+      } else if (rateLimited) {
         setStatusMessage({
           type: 'warning',
           text: `Applied bio & status across all ${data.data.updatedCount} bot(s). Note: ${data.data.rateLimitedCount} bot(s) hit Discord's 10-minute avatar/banner limit (Discord allows only 2 image updates per 10 minutes per bot). See report below for details.`,
+        });
+      } else if (lockedCount > 0) {
+        setStatusMessage({
+          type: 'success',
+          text: `Successfully applied profile updates to ${data.data.updatedCount} bot(s)! Note: ${lockedCount} shared bot(s) skipped (original owner retains profile rights; voice & commands are fully active).`,
         });
       } else {
         setStatusMessage({
@@ -526,13 +553,22 @@ export default function BotProfilesPage() {
 
           <button
             onClick={() => handleSaveProfiles(false)}
-            disabled={isSaving || bots.length === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold transition disabled:opacity-50 shadow-md"
+            disabled={isSaving || bots.length === 0 || (targetScope === 'single' && selectedBot?.profileLocked)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition disabled:opacity-50 shadow-md ${
+              targetScope === 'single' && selectedBot?.profileLocked
+                ? 'bg-amber-600/60 text-white cursor-not-allowed'
+                : 'bg-primary hover:bg-primary/90 text-primary-foreground'
+            }`}
           >
             {isSaving ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 <span>Applying to Discord...</span>
+              </>
+            ) : targetScope === 'single' && selectedBot?.profileLocked ? (
+              <>
+                <Lock className="w-3.5 h-3.5" />
+                <span>Profile Locked</span>
               </>
             ) : (
               <>
@@ -645,8 +681,9 @@ export default function BotProfilesPage() {
               }`}
             >
               <UserCircle className="w-3.5 h-3.5" />
-              <span className="max-w-[150px] truncate">
-                Single {selectedBotId ? `(${bots.find(b => b.id === selectedBotId)?.displayName || '1'})` : ''}
+              <span className="max-w-[150px] truncate flex items-center gap-1">
+                Single {selectedBot ? `(${selectedBot.displayName})` : ''}
+                {selectedBot?.profileLocked && <Lock className="w-3 h-3 text-amber-400 shrink-0" />}
               </span>
             </button>
           </div>
@@ -775,6 +812,23 @@ export default function BotProfilesPage() {
             {editorTab === 'editor' ? (
               /* CUSTOM FORM EDITOR */
               <div className="space-y-4 text-xs">
+                {/* LOCKED ADVISORY BANNER FOR SHARED / DEVELOPER TOKENS */}
+                {targetScope === 'single' && selectedBot?.profileLocked && (
+                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 flex items-start gap-3 shadow-xs">
+                    <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-foreground text-xs">Profile Customization Locked (Shared Bot Token)</span>
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-mono border border-amber-500/30 font-semibold">
+                          Original Owner Priority
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        {selectedBot.profileLockedReason || 'Profile and banner customizations are strictly reserved for the original bot registrant. Voice streaming, song playback (!play / !p), channel spam, and all bot commands remain 100% active and operational!'}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {/* 1. Display Name / Nickname */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
@@ -1238,6 +1292,7 @@ export default function BotProfilesPage() {
                 <div className="flex items-center gap-3 text-[10px] font-medium">
                   <span className="text-emerald-400">✓ Updated</span>
                   <span className="text-amber-400">⏱️ Cooldown</span>
+                  <span className="text-amber-400">🔒 Locked (Shared)</span>
                 </div>
               </div>
 
@@ -1248,7 +1303,9 @@ export default function BotProfilesPage() {
                     className="p-2.5 rounded-lg bg-secondary/40 border border-border/60 flex items-center justify-between gap-2"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      {res.success ? (
+                      {res.profileLocked ? (
+                        <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      ) : res.success ? (
                         <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                       ) : (
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -1257,24 +1314,32 @@ export default function BotProfilesPage() {
                     </div>
 
                     <div className="flex items-center gap-2 text-[10px] shrink-0 font-medium">
-                      {res.avatarUpdated ? (
-                        <span className="text-emerald-400">Avatar ✓</span>
-                      ) : res.avatarRateLimited ? (
-                        <span className="text-amber-400" title="Discord 10-min avatar cooldown">Avatar ⏱️</span>
-                      ) : null}
+                      {res.profileLocked ? (
+                        <span className="text-amber-400 font-mono" title={res.profileLockedReason || "Profile update locked to original owner"}>
+                          Owner Priority 🔒
+                        </span>
+                      ) : (
+                        <>
+                          {res.avatarUpdated ? (
+                            <span className="text-emerald-400">Avatar ✓</span>
+                          ) : res.avatarRateLimited ? (
+                            <span className="text-amber-400" title="Discord 10-min avatar cooldown">Avatar ⏱️</span>
+                          ) : null}
 
-                      {res.bannerUpdated ? (
-                        <span className="text-emerald-400">Banner ✓</span>
-                      ) : res.bannerRateLimited ? (
-                        <span className="text-amber-400" title="Discord 10-min banner cooldown">Banner ⏱️</span>
-                      ) : null}
+                          {res.bannerUpdated ? (
+                            <span className="text-emerald-400">Banner ✓</span>
+                          ) : res.bannerRateLimited ? (
+                            <span className="text-amber-400" title="Discord 10-min banner cooldown">Banner ⏱️</span>
+                          ) : null}
 
-                      {res.bioUpdated && (
-                        <span className="text-emerald-400">Bio ✓</span>
-                      )}
+                          {res.bioUpdated && (
+                            <span className="text-emerald-400">Bio ✓</span>
+                          )}
 
-                      {res.statusUpdated && (
-                        <span className="text-emerald-400">Status ✓</span>
+                          {res.statusUpdated && (
+                            <span className="text-emerald-400">Status ✓</span>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -1397,7 +1462,11 @@ export default function BotProfilesPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-xs font-bold text-foreground">Fleet Bots Roster ({bots.length})</h4>
-                <p className="text-[11px] text-muted-foreground">Select bots to target for profile updates</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {lockedBotsCount > 0
+                    ? `Select bots to target (${lockedBotsCount} shared bot(s) protected for profile edits)`
+                    : 'Select bots to target for profile updates'}
+                </p>
               </div>
 
               <div className="flex items-center gap-1 text-[11px]">
@@ -1527,6 +1596,15 @@ export default function BotProfilesPage() {
                         <div className="min-w-0">
                           <div className="text-xs font-semibold text-foreground truncate flex items-center gap-1.5">
                             <span className="truncate">{b.displayName}</span>
+                            {b.profileLocked && (
+                              <span
+                                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0"
+                                title={b.profileLockedReason || "Shared bot token: Profile updates reserved for original owner. Voice and commands fully active."}
+                              >
+                                <Lock className="w-2.5 h-2.5" />
+                                <span>Locked</span>
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] text-muted-foreground font-mono truncate">
                             {b.applicationId}
@@ -1536,11 +1614,13 @@ export default function BotProfilesPage() {
 
                       <div className="text-right shrink-0">
                         <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-medium ${
-                          b.customStatus
+                          b.profileLocked
+                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            : b.customStatus
                             ? 'bg-primary/10 text-primary border-primary/20'
                             : 'bg-secondary text-muted-foreground border-border/60'
                         }`}>
-                          {b.customStatus ? 'Customized' : 'Default'}
+                          {b.profileLocked ? 'Shared Token' : b.customStatus ? 'Customized' : 'Default'}
                         </span>
                       </div>
                     </div>

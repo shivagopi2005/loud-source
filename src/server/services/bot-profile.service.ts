@@ -54,9 +54,141 @@ export interface BotProfileUpdateResult {
   bannerRateLimited?: boolean;
   rateLimitMessage?: string;
   error?: string;
+  profileLocked?: boolean;
+  profileLockedReason?: string;
+}
+
+export interface BotProfilePermission {
+  canEditProfile: boolean;
+  profileLocked: boolean;
+  profileLockedReason?: string;
+  isOriginalOwner: boolean;
+  originalOwnerId?: string;
+  originalOwnerUsername?: string;
+  isDeveloperBot: boolean;
 }
 
 export class BotProfileService {
+  /**
+   * Determine whether an actor is allowed to edit a bot's profile.
+   * Rules:
+   * 1. Platform Developer (788970167907778562) can edit all developer bots and has supreme authority.
+   * 2. If a bot token belongs to Developer Fleet:
+   *    - Non-developer users CANNOT edit profile/banner/avatar.
+   *    - Non-developer users CAN stream voice, play songs, and run commands.
+   * 3. If a bot token was registered by regular users (User A first, User B second):
+   *    - User A (earliest created_at) has priority and can edit profile.
+   *    - User B cannot edit profile, but retains full voice, music, and command rights.
+   */
+  public static async getBotProfilePermission(
+    botId: string,
+    actorUserId: string,
+    actorDiscordId?: string
+  ): Promise<BotProfilePermission> {
+    const DEVELOPER_ID = '788970167907778562';
+    const isActorDeveloper = actorDiscordId === DEVELOPER_ID;
+
+    const targetBot = await prisma.botApplication.findUnique({
+      where: { id: botId },
+      include: {
+        workspace: {
+          include: { owner: true },
+        },
+      },
+    });
+
+    if (!targetBot) {
+      return {
+        canEditProfile: false,
+        profileLocked: true,
+        profileLockedReason: 'Bot application not found.',
+        isOriginalOwner: false,
+        isDeveloperBot: false,
+      };
+    }
+
+    // Check if this bot token is a Developer Fleet Bot (owned by DEVELOPER_ID in any workspace)
+    const devOwnedBot = await prisma.botApplication.findFirst({
+      where: {
+        application_id: targetBot.application_id,
+        workspace: {
+          owner: { discord_id: DEVELOPER_ID },
+        },
+      },
+      include: {
+        workspace: { include: { owner: true } },
+      },
+    });
+
+    const isDeveloperBot = !!devOwnedBot;
+
+    // Case 1: The bot is a developer fleet bot
+    if (isDeveloperBot) {
+      if (isActorDeveloper) {
+        return {
+          canEditProfile: true,
+          profileLocked: false,
+          isOriginalOwner: true,
+          originalOwnerId: devOwnedBot.workspace?.owner?.id,
+          originalOwnerUsername: devOwnedBot.workspace?.owner?.username || 'Developer',
+          isDeveloperBot: true,
+        };
+      } else {
+        return {
+          canEditProfile: false,
+          profileLocked: true,
+          profileLockedReason:
+            'This bot was registered by the Platform Developer. You have full access to stream voice, play songs, and run commands, but profile and banner customizations are restricted to the developer.',
+          isOriginalOwner: false,
+          originalOwnerId: devOwnedBot.workspace?.owner?.id,
+          originalOwnerUsername: devOwnedBot.workspace?.owner?.username || 'Developer',
+          isDeveloperBot: true,
+        };
+      }
+    }
+
+    // Case 2: Shared bot token between regular users
+    // Find the earliest registration of this application_id across all workspaces
+    const earliestBot = await prisma.botApplication.findFirst({
+      where: {
+        application_id: targetBot.application_id,
+      },
+      orderBy: { created_at: 'asc' },
+      include: {
+        workspace: {
+          include: { owner: true },
+        },
+      },
+    });
+
+    const isFirstRegistrant =
+      isActorDeveloper ||
+      earliestBot?.workspace?.owner_user_id === actorUserId ||
+      earliestBot?.id === targetBot.id ||
+      earliestBot?.workspace_id === targetBot.workspace_id;
+
+    if (isFirstRegistrant) {
+      return {
+        canEditProfile: true,
+        profileLocked: false,
+        isOriginalOwner: true,
+        originalOwnerId: earliestBot?.workspace?.owner?.id,
+        originalOwnerUsername: earliestBot?.workspace?.owner?.username,
+        isDeveloperBot: false,
+      };
+    }
+
+    const originalOwnerName = earliestBot?.workspace?.owner?.username || 'the original owner';
+    return {
+      canEditProfile: false,
+      profileLocked: true,
+      profileLockedReason: `This bot was first registered by ${originalOwnerName}. Priority belongs to the original owner. You have full access to stream voice, play songs, and run commands, but profile customizations are managed by the original owner.`,
+      isOriginalOwner: false,
+      originalOwnerId: earliestBot?.workspace?.owner?.id,
+      originalOwnerUsername: originalOwnerName,
+      isDeveloperBot: false,
+    };
+  }
   /**
    * Converts any image input (URL, Hex color, or Base64) into a valid PNG/JPEG Data URI for Discord API.
    */
@@ -141,6 +273,7 @@ export class BotProfileService {
     updatedCount: number;
     failedCount: number;
     rateLimitedCount: number;
+    lockedCount?: number;
     results: BotProfileUpdateResult[];
   }> {
     const {
@@ -204,37 +337,42 @@ export class BotProfileService {
     // Permanently protect OAuth bot: never modify its username, name, bio, avatar, or banner
     botsToUpdate = botsToUpdate.filter((b) => !isRedirectBot(b));
 
-    // Permanently protect Developer Fleet bots: non-developers can NEVER modify developer bots
-    if (!isDeveloper) {
-      const DEVELOPER_ID = '788970167907778562';
-      const devBots = await prisma.botApplication.findMany({
-        where: {
-          workspace: { owner: { discord_id: DEVELOPER_ID } },
-        },
-        select: { id: true, application_id: true },
-      });
-      const devBotIds = new Set(devBots.map((b) => b.id));
-      const devAppIds = new Set(devBots.map((b) => b.application_id).filter(Boolean));
+    // Check profile update permissions per bot (first-to-add priority & developer protection)
+    const editableBots: typeof botsToUpdate = [];
+    const lockedResults: BotProfileUpdateResult[] = [];
 
-      botsToUpdate = botsToUpdate.filter(
-        (b) => !devBotIds.has(b.id) && !devAppIds.has(b.application_id)
-      );
+    for (const bot of botsToUpdate) {
+      const perm = await this.getBotProfilePermission(bot.id, actorUserId || '', actorDiscordId);
+      if (perm.canEditProfile) {
+        editableBots.push(bot);
+      } else {
+        lockedResults.push({
+          botId: bot.id,
+          displayName: bot.display_name,
+          success: true,
+          profileLocked: true,
+          profileLockedReason: perm.profileLockedReason,
+          rateLimitMessage: perm.profileLockedReason || 'Profile locked: Shared bot token owned by original registrant.',
+          error: perm.profileLockedReason || 'Profile locked: Priority belongs to original registrant.',
+        });
+      }
     }
 
-    if (botsToUpdate.length === 0) {
+    if (editableBots.length === 0) {
       return {
         success: true,
-        totalTargeted: 0,
+        totalTargeted: botsToUpdate.length,
         updatedCount: 0,
+        lockedCount: lockedResults.length,
         failedCount: 0,
         rateLimitedCount: 0,
-        results: [],
+        results: lockedResults,
       };
     }
 
     const themePool = BotProfilePresets.getPresetsByTheme(randomize?.theme || 'all');
     const isBulkUniform = !randomize?.enabled;
-    const targetIds = botsToUpdate.map((b) => b.id);
+    const targetIds = editableBots.map((b) => b.id);
 
     // Pre-resolve uniform images once to avoid redundant downloads
     let uniformAvatarBase64: string | null = null;
@@ -533,19 +671,21 @@ export class BotProfileService {
     const CHUNK_SIZE = 4;
     const results: BotProfileUpdateResult[] = [];
 
-    for (let i = 0; i < botsToUpdate.length; i += CHUNK_SIZE) {
-      const chunk = botsToUpdate.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < editableBots.length; i += CHUNK_SIZE) {
+      const chunk = editableBots.slice(i, i + CHUNK_SIZE);
       const chunkResults = await Promise.all(
         chunk.map((bot, idx) => updateSingleBot(bot, i + idx))
       );
       results.push(...chunkResults);
 
-      if (i + CHUNK_SIZE < botsToUpdate.length) {
+      if (i + CHUNK_SIZE < editableBots.length) {
         await new Promise((resolve) => setTimeout(resolve, 150));
       }
     }
 
+    const allResults = [...results, ...lockedResults];
     const updatedCount = results.filter((r) => r.success).length;
+    const lockedCount = lockedResults.length;
     const failedCount = results.filter((r) => !r.success).length;
     const rateLimitedCount = results.filter((r) => r.rateLimited).length;
 
@@ -561,6 +701,7 @@ export class BotProfileService {
           targetMode,
           totalTargeted: botsToUpdate.length,
           updatedCount,
+          lockedCount,
           rateLimitedCount,
           failedCount,
         },
@@ -571,15 +712,17 @@ export class BotProfileService {
     realtimeBroadcaster.broadcast(workspaceId, 'METRICS_UPDATED', {
       timestamp: new Date().toISOString(),
       updatedCount,
+      lockedCount,
     });
 
     return {
       success: true,
       totalTargeted: botsToUpdate.length,
       updatedCount,
+      lockedCount,
       failedCount,
       rateLimitedCount,
-      results,
+      results: allResults,
     };
   }
 }

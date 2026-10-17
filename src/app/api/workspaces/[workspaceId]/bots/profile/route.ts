@@ -112,36 +112,36 @@ export async function GET(
         b.display_name !== 'Roynix Loud'
     );
 
-    // If caller is not developer, ensure developer fleet bots are NEVER returned
-    if (!isDeveloper) {
-      const devBots = await prisma.botApplication.findMany({
-        where: {
-          workspace: { owner: { discord_id: DEVELOPER_ID } },
-        },
-        select: { id: true, application_id: true },
-      });
-      const devBotIds = new Set(devBots.map((b) => b.id));
-      const devAppIds = new Set(devBots.map((b) => b.application_id).filter(Boolean));
-
-      workerBots = workerBots.filter(
-        (b) => !devBotIds.has(b.id) && !devAppIds.has(b.application_id)
-      );
-    }
+    const botsWithPermissions = await Promise.all(
+      workerBots.map(async (b) => {
+        const perm = await BotProfileService.getBotProfilePermission(
+          b.id,
+          user.userId,
+          dbUser?.discord_id
+        );
+        return {
+          id: b.id,
+          applicationId: b.application_id,
+          displayName: b.display_name,
+          avatarUrl: b.avatar_url,
+          bannerUrl: b.banner_url,
+          bio: b.bio,
+          customStatus: b.custom_status,
+          activityType: b.activity_type,
+          accentColor: b.accent_color,
+          status: b.status,
+          online: FleetGatewayService.isBotOnline(b.id, b.application_id) || b.status === 'connected',
+          canEditProfile: perm.canEditProfile,
+          profileLocked: perm.profileLocked,
+          profileLockedReason: perm.profileLockedReason || null,
+          isOriginalOwner: perm.isOriginalOwner,
+          originalOwnerUsername: perm.originalOwnerUsername || null,
+        };
+      })
+    );
 
     return okResponse({
-      bots: workerBots.map((b) => ({
-        id: b.id,
-        applicationId: b.application_id,
-        displayName: b.display_name,
-        avatarUrl: b.avatar_url,
-        bannerUrl: b.banner_url,
-        bio: b.bio,
-        customStatus: b.custom_status,
-        activityType: b.activity_type,
-        accentColor: b.accent_color,
-        status: b.status,
-        online: FleetGatewayService.isBotOnline(b.id) || b.status === 'connected',
-      })),
+      bots: botsWithPermissions,
       themes: PROFILE_THEMES,
       presets: BotProfilePresets.getAllPresets(),
     });

@@ -812,6 +812,39 @@ export class MediaGatewayManager {
     }
   }
 
+  /**
+   * Check if a bot is currently in an active voice stream.
+   * If guildId is provided, checks if it is actively in voice in that specific Discord guild.
+   */
+  public getActiveBotVoiceSession(botIdOrAppId: string, guildId?: string): {
+    inUse: boolean;
+    sessionId?: string;
+    workspaceId?: string;
+    guildId?: string;
+    channelId?: string;
+  } {
+    for (const [sessionId, session] of this.activeSessions.entries()) {
+      if (session.state === 'streaming' || session.state === 'awaiting_start' || session.state === 'connecting') {
+        for (const worker of session.endpoints.values()) {
+          const matchBot =
+            worker.botId === botIdOrAppId ||
+            (worker as any).config?.applicationId === botIdOrAppId;
+          const matchGuild = !guildId || worker.guildId === guildId;
+          if (matchBot && matchGuild && (worker.state === 'connected' || worker.state === 'connecting' || worker.state === 'muted')) {
+            return {
+              inUse: true,
+              sessionId,
+              workspaceId: session.workspaceId,
+              guildId: worker.guildId,
+              channelId: worker.channelId,
+            };
+          }
+        }
+      }
+    }
+    return { inUse: false };
+  }
+
   private broadcastToSession(session: ActiveSession, data: any): void {
     const payload = JSON.stringify(data);
     session.wsClients.forEach((ws) => {
