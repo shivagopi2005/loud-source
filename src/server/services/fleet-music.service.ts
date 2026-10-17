@@ -289,18 +289,28 @@ export class FleetMusicService {
     if (isFreeTier) {
       allBots = await FleetGatewayService.getFreeTierDeveloperBots();
     } else {
+      if (!workspaceId) {
+        return {
+          track: {
+            title: resolved.title,
+            duration: resolved.duration,
+            webpageUrl: resolved.webpageUrl,
+            streamUrl: resolved.streamUrl,
+            requestedBy: requestedById,
+            startedAt: Date.now(),
+          },
+          connectedBotCount: 0,
+          totalBotsInGuild: 0,
+        };
+      }
       allBots = await prisma.botApplication.findMany({
         where: {
-          ...(workspaceId ? { workspace_id: workspaceId } : {}),
+          workspace_id: workspaceId,
           status: { notIn: ['removed', 'disabled'] },
           operational_role: { not: 'oauth_redirect' },
           application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
         },
       });
-
-      if (allBots.length === 0) {
-        allBots = await FleetGatewayService.getFreeTierDeveloperBots();
-      }
     }
 
     const botsToConnect = maxBots && maxBots > 0 ? allBots.slice(0, maxBots) : allBots;

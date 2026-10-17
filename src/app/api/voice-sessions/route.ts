@@ -88,6 +88,69 @@ export async function POST(request: NextRequest) {
       'voice:start'
     );
 
+    const { PremiumService } = await import('@/server/services/premium.service');
+    const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: data.workspaceId },
+      include: { owner: true },
+    });
+
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { discord_id: true, tier: true, max_bots_allowed: true },
+    });
+
+    const ownerTier = await PremiumService.getUserTier(workspace?.owner?.discord_id || '');
+    const sessionTier = await PremiumService.getUserTier(dbUser?.discord_id || '');
+
+    const TIER_RANKS: Record<string, number> = {
+      trial: 0,
+      free: 0,
+      community: 1,
+      pro: 2,
+      premium: 2,
+      enterprise: 3,
+      developer: 4,
+    };
+
+    const bestRank = Math.max(
+      TIER_RANKS[ownerTier.tier] ?? 0,
+      TIER_RANKS[sessionTier.tier] ?? 0,
+      TIER_RANKS[workspace?.plan_id || ''] ?? 0,
+      ownerTier.isDeveloper || sessionTier.isDeveloper ? 4 : 0
+    );
+
+    const isFreeTier = bestRank === 0;
+
+    // Strict plan limits on simultaneous streaming voice endpoints:
+    // Free / Community Trial: 5
+    // Community: 5
+    // Pro: 20
+    // Enterprise: 100
+    // Developer: 999
+    const maxAllowedEndpoints =
+      bestRank >= 4
+        ? 999
+        : bestRank === 3
+        ? (dbUser?.max_bots_allowed || 100)
+        : bestRank === 2
+        ? (dbUser?.max_bots_allowed || 20)
+        : 5;
+
+    if (data.destinations.length > maxAllowedEndpoints) {
+      return errorResponse(
+        'PLAN_LIMIT_EXCEEDED',
+        `Your subscription tier allows streaming to up to ${maxAllowedEndpoints} bot endpoint(s) simultaneously. You selected ${data.destinations.length}. Please upgrade your plan at /usage to stream to more bots.`,
+        403
+      );
+    }
+
+    let freeDevBots: any[] = [];
+    if (isFreeTier) {
+      freeDevBots = await FleetGatewayService.getFreeTierDeveloperBots();
+    }
+
     // Verify each bot credential and destination existence
     const endpointConfigs: VoiceEndpointConfig[] = [];
 
@@ -114,6 +177,15 @@ export async function POST(request: NextRequest) {
 
       if (!bot || !bot.credentials.length) {
         console.warn(`[CreateVoiceSession] Bot ${dest.botId} does not have an active credential, skipping.`);
+        continue;
+      }
+
+      // STRICT ISOLATION: Bot must belong to this workspace, OR be an allocated developer bot for Free Tier
+      const isOwnBot = bot.workspace_id === data.workspaceId;
+      const isAllowedDevBot = isFreeTier && freeDevBots.some((fb) => fb.id === bot.id);
+
+      if (!isOwnBot && !isAllowedDevBot) {
+        console.warn(`[CreateVoiceSession] Cross-workspace bot access blocked: bot ${dest.botId} does not belong to workspace ${data.workspaceId}`);
         continue;
       }
 
@@ -250,7 +322,10 @@ export async function POST(request: NextRequest) {
     }
 
     const rawInitialGain = data.audioConfig?.inputGain ?? data.audioConfiguration?.inputGain;
-    const initialGain = typeof rawInitialGain === 'number' && !isNaN(rawInitialGain) ? rawInitialGain : 1.0;
+    let initialGain = typeof rawInitialGain === 'number' && !isNaN(rawInitialGain) ? rawInitialGain : 1.0;
+    // Cap gain by tier: Free/Community: max 2.0 (200%), Pro/Enterprise/Developer: up to 100.0 (10000%)
+    const maxGain = bestRank >= 2 ? 100.0 : 2.0;
+    initialGain = Math.max(0, Math.min(maxGain, initialGain));
 
     // Initialize on MediaGateway
     await mediaGateway.createSession(

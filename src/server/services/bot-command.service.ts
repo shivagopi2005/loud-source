@@ -364,14 +364,30 @@ export class BotCommandService {
     guild?: any
   ): Promise<boolean> {
     try {
-      // 0. Supreme Developer / Owner: unrestricted access across all bots
+      // 0. Supreme Developer: unrestricted master access across all bots
       if (discordUserId === DEVELOPER_ID) {
         return true;
       }
 
-      // 1. Strict workspace scoping: User can ONLY command bots belonging to their own workspace!
+      // 1. Look up bot application and find all workspaces where this bot token is registered
       const bot = await prisma.botApplication.findUnique({
         where: { id: botId },
+        select: {
+          id: true,
+          application_id: true,
+          workspace_id: true,
+        },
+      });
+
+      if (!bot) return false;
+
+      const matchingBots = await prisma.botApplication.findMany({
+        where: {
+          OR: [
+            { id: botId },
+            ...(bot.application_id ? [{ application_id: bot.application_id }] : []),
+          ],
+        },
         include: {
           workspace: {
             include: {
@@ -382,14 +398,20 @@ export class BotCommandService {
         },
       });
 
-      if (bot?.workspace) {
+      for (const b of matchingBots) {
+        if (!b.workspace) continue;
+
         // Workspace Owner
-        if (bot.workspace.owner?.discord_id === discordUserId) return true;
-        if (bot.workspace.owner?.username === discordUserId) return true;
-        if (bot.workspace.owner_user_id === discordUserId) return true;
+        if (
+          b.workspace.owner?.discord_id === discordUserId ||
+          b.workspace.owner?.username === discordUserId ||
+          b.workspace.owner_user_id === discordUserId
+        ) {
+          return true;
+        }
 
         // Added Workspace Admin / Operator members
-        const isWorkspaceAdmin = bot.workspace.members.some(
+        const isWorkspaceAdmin = b.workspace.members.some(
           (m) =>
             (m.user?.discord_id === discordUserId ||
               m.user?.username === discordUserId ||
@@ -397,15 +419,6 @@ export class BotCommandService {
             ['owner', 'administrator', 'operator', 'platform_admin'].includes(m.role)
         );
         if (isWorkspaceAdmin) return true;
-
-        // Free tier website users can command developer fleet bots (allocated 5 bots)
-        if (
-          bot.workspace.owner?.discord_id === DEVELOPER_ID ||
-          bot.workspace.owner_user_id === DEVELOPER_ID
-        ) {
-          const isWebUser = await this.isWebsiteUser(discordUserId);
-          if (isWebUser) return true;
-        }
       }
 
       // 2. Optional environment variable override
@@ -415,7 +428,7 @@ export class BotCommandService {
         .filter(Boolean);
       if (envAdmins.includes(discordUserId)) return true;
 
-      // STRICT ENFORCEMENT: Users can ONLY command bots in workspaces they own or belong to.
+      // STRICT ENFORCEMENT: Users can ONLY command bots in workspaces they own or belong to as admin.
       return false;
     } catch (err) {
       console.error('[BotCommands] Authorization check error:', err);
@@ -578,39 +591,31 @@ export class BotCommandService {
     this.handledMessageIds.add(message.id);
     setTimeout(() => this.handledMessageIds.delete(message.id), 60000);
 
-    // Authorization:
-    const isDeveloper = message.author.id === DEVELOPER_ID;
-    const isWorkspaceAuthorized = await this.isAuthorizedUser(
+    // Strict Authorization: Bot strictly listens ONLY to Developer, Workspace Owner, or Workspace Admin
+    const isAuthorized = await this.isAuthorizedUser(
       botId,
       message.author.id,
       message.member,
       message.guild
     );
 
-    const isWebsiteUser = await this.isWebsiteUser(message.author.id);
-    const isSiteUser = isDeveloper || isWebsiteUser || isWorkspaceAuthorized;
-
-    // If unauthorized stranger who has never logged in to the website:
-    if (!isSiteUser) {
-      if (cmd === 'help' || cmd === 'commands' || cmd === 'status' || cmd === 'ping' || isLicenseCommand || isDevCommand) {
+    if (!isAuthorized) {
+      // The dedicated redirect bot may still handle license redemption or developer commands
+      if (isRedirect && (isLicenseCommand || isDevCommand)) {
+        // Proceed for license activation on redirect bot
+      } else {
+        // Silently drop all unauthorized command attempts.
+        // User A's bot cannot be controlled by User B, strangers cannot command developer bots.
         return;
       }
-      const loginEmbed = new EmbedBuilder()
-        .setTitle('🔐 Website Login Required')
-        .setColor(0xf59e0b)
-        .setDescription(
-          `Hello <@${message.author.id}>! To access the **Community Trial** (5 bots & 10 free commands), please log in to our website first using your Discord account.\n\n` +
-          `👉 **Login**: [Click here to Login](${process.env.NEXT_PUBLIC_APP_URL || 'https://roynix.online'}/login)`
-        )
-        .setFooter({ text: 'LOUD Voice Studio • Authentication Required' });
-
-      try {
-        if (message.channel && 'send' in message.channel) {
-          await (message.channel as any).send({ embeds: [loginEmbed] });
-        }
-      } catch {}
-      return;
     }
+
+    const isDeveloper = message.author.id === DEVELOPER_ID;
+
+    const botRecord = await prisma.botApplication.findUnique({
+      where: { id: botId },
+      select: { workspace_id: true },
+    });
 
     // Auto-delete the command message immediately to keep the channel clean
     try {
@@ -786,14 +791,7 @@ export class BotCommandService {
           const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
             botRecord.workspace_id
           );
-          if (workspaceWorkerClients.length > 0) {
-            clientsToUse = workspaceWorkerClients.slice(0, maxBots);
-          } else {
-            const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
-              (c) => !FleetGatewayService.isRedirectBot(c)
-            );
-            clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
-          }
+          clientsToUse = workspaceWorkerClients.slice(0, maxBots);
         }
 
         if (clientsToUse.length === 0) {
@@ -889,14 +887,7 @@ export class BotCommandService {
           const workspaceWorkerClients = await FleetGatewayService.getWorkspaceWorkerClients(
             botRecord.workspace_id
           );
-          if (workspaceWorkerClients.length > 0) {
-            clientsToUse = workspaceWorkerClients.slice(0, maxBots);
-          } else {
-            const allWorkerClients = FleetGatewayService.getWorkerClients().filter(
-              (c) => !FleetGatewayService.isRedirectBot(c)
-            );
-            clientsToUse = allWorkerClients.slice(0, Math.min(5, maxBots));
-          }
+          clientsToUse = workspaceWorkerClients.slice(0, maxBots);
         }
 
         if (clientsToUse.length === 0) {
@@ -989,22 +980,9 @@ export class BotCommandService {
               application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
             },
           });
-          let workerBots = workspaceBots.filter(
+          const workerBots = workspaceBots.filter(
             (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
           );
-          if (workerBots.length === 0) {
-            const allWorkerBots = await prisma.botApplication.findMany({
-              where: {
-                status: { notIn: ['removed', 'disabled'] },
-                operational_role: { not: 'oauth_redirect' },
-                application_id: { notIn: [process.env.DISCORD_CLIENT_ID || '', '1560261747137454161'].filter(Boolean) },
-              },
-              take: Math.min(5, userTier.maxBots),
-            });
-            workerBots = allWorkerBots.filter(
-              (b) => !FleetGatewayService.isRedirectBot(b.id) && !FleetGatewayService.isRedirectBot(b.application_id)
-            );
-          }
           botsToJoin = userTier.maxBots ? workerBots.slice(0, userTier.maxBots) : workerBots;
         }
 
@@ -1093,7 +1071,9 @@ export class BotCommandService {
           select: { workspace_id: true },
         });
 
-        MediaGatewayManager.getInstance().emergencyStopAll();
+        if (botRecord?.workspace_id) {
+          await MediaGatewayManager.getInstance().stopWorkspaceSessions(botRecord.workspace_id, 'user_stop');
+        }
         if (message.guild) {
           FleetMusicService.getInstance().stop(message.guild.id);
         }
@@ -1151,7 +1131,9 @@ export class BotCommandService {
           return;
         }
 
-        MediaGatewayManager.getInstance().setMasterGainAll(val / 100);
+        if (botRecord?.workspace_id) {
+          MediaGatewayManager.getInstance().setMasterGainWorkspace(botRecord.workspace_id, val / 100);
+        }
         if (message.guild) {
           FleetMusicService.getInstance().setVolume(message.guild.id, val / 100);
         }
@@ -1160,13 +1142,17 @@ export class BotCommandService {
 
       // 9. !mute or !fleet mute -> ALL BOTS UPDATE AT THE SAME TIME
       if (cmd === 'mute' || (cmd === 'fleet' && sub === 'mute')) {
-        MediaGatewayManager.getInstance().setMasterMuteAll(true);
+        if (botRecord?.workspace_id) {
+          MediaGatewayManager.getInstance().setMasterMuteWorkspace(botRecord.workspace_id, true);
+        }
         return;
       }
 
       // 10. !unmute or !fleet unmute -> ALL BOTS UPDATE AT THE SAME TIME
       if (cmd === 'unmute' || (cmd === 'fleet' && sub === 'unmute')) {
-        MediaGatewayManager.getInstance().setMasterMuteAll(false);
+        if (botRecord?.workspace_id) {
+          MediaGatewayManager.getInstance().setMasterMuteWorkspace(botRecord.workspace_id, false);
+        }
         return;
       }
 

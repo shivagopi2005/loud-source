@@ -698,10 +698,10 @@ export class MediaGatewayManager {
 
     this.activeSessions.delete(sessionId);
 
-    // Concurrently force-disconnect all workers and any lingering bot voice state across fleet
+    // Concurrently force-disconnect all workers and any lingering bot voice state strictly for this workspace
     await Promise.allSettled([
       ...destroyPromises,
-      FleetGatewayService.forceDisconnectAllVoice(),
+      session.workspaceId ? FleetGatewayService.forceDisconnectWorkspaceVoice(session.workspaceId) : Promise.resolve(),
     ]);
 
     // Update DB & Audit
@@ -733,12 +733,44 @@ export class MediaGatewayManager {
     return this.activeSessions.get(sessionId);
   }
 
+  /**
+   * Stop all active voice streaming sessions belonging strictly to a specific workspace.
+   */
+  public async stopWorkspaceSessions(workspaceId: string, reason = 'workspace_stop'): Promise<void> {
+    if (!workspaceId) return;
+    const sessionIdsToStop: string[] = [];
+    for (const session of this.activeSessions.values()) {
+      if (session.workspaceId === workspaceId) {
+        sessionIdsToStop.push(session.sessionId);
+      }
+    }
+    await Promise.allSettled(
+      sessionIdsToStop.map((id) => this.emergencyStop(id, reason))
+    );
+  }
+
   public async emergencyStopAll(reason = 'emergency_stop'): Promise<void> {
     const sessionIds = Array.from(this.activeSessions.keys());
     await Promise.allSettled([
       ...sessionIds.map((sessionId) => this.emergencyStop(sessionId, reason)),
       FleetGatewayService.forceDisconnectAllVoice(),
     ]);
+  }
+
+  public setMasterGainWorkspace(workspaceId: string, gain: number): void {
+    const clampedGain = Math.max(0, Math.min(100.0, gain));
+    for (const session of this.activeSessions.values()) {
+      if (session.workspaceId === workspaceId) {
+        session.masterGain = clampedGain;
+        session.endpoints.forEach((worker) => {
+          worker.setGain(clampedGain);
+        });
+        this.broadcastToSession(session, {
+          type: 'STATE_CHANGED',
+          masterGain: clampedGain,
+        });
+      }
+    }
   }
 
   public setMasterGainAll(gain: number): void {
@@ -752,6 +784,21 @@ export class MediaGatewayManager {
         type: 'STATE_CHANGED',
         masterGain: clampedGain,
       });
+    }
+  }
+
+  public setMasterMuteWorkspace(workspaceId: string, muted: boolean): void {
+    for (const session of this.activeSessions.values()) {
+      if (session.workspaceId === workspaceId) {
+        session.masterMuted = muted;
+        session.endpoints.forEach((worker) => {
+          worker.setMute(muted);
+        });
+        this.broadcastToSession(session, {
+          type: 'STATE_CHANGED',
+          masterMuted: muted,
+        });
+      }
     }
   }
 

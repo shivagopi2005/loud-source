@@ -1038,4 +1038,80 @@ export class FleetGatewayService {
     console.log(`[FleetGateway] Force-disconnect complete. Disconnected ${disconnectedCount} bot voice instance(s) simultaneously!`);
     return { total: clients.length, disconnected: disconnectedCount };
   }
+
+  /**
+   * Force disconnect active bot clients belonging strictly to a specific workspace from voice channels simultaneously.
+   */
+  public static async forceDisconnectWorkspaceVoice(workspaceId: string, targetGuildId?: string): Promise<{ total: number; disconnected: number }> {
+    if (!workspaceId) return { total: 0, disconnected: 0 };
+    const clients = await this.getWorkspaceWorkerClients(workspaceId);
+    console.log(`[FleetGateway] Force-disconnecting voice across ${clients.length} active bot client(s) for workspace ${workspaceId}...`);
+
+    let disconnectedCount = 0;
+
+    await Promise.allSettled(
+      clients.map(async (client) => {
+        try {
+          const guildsToProcess = targetGuildId
+            ? [client.guilds.cache.get(targetGuildId)].filter(Boolean)
+            : Array.from(client.guilds.cache.values());
+
+          for (const guild of guildsToProcess) {
+            if (!guild) continue;
+            try {
+              const currentVoiceChannelId = guild.members.me?.voice?.channelId;
+              const botGroupId = client.user?.id || '';
+
+              // Clean up any @discordjs/voice connection
+              const globalConn = getVoiceConnection(guild.id, botGroupId);
+              if (globalConn) {
+                try {
+                  globalConn.removeAllListeners('error');
+                  globalConn.destroy();
+                } catch {}
+              }
+
+              // Disconnect member voice state
+              if (guild.members.me?.voice) {
+                try {
+                  guild.members.me.voice.disconnect().catch(() => {});
+                } catch {}
+              }
+
+              // Send raw Discord Gateway Opcode 4 (Voice State Update with channel_id: null)
+              if (guild.shard) {
+                try {
+                  guild.shard.send({
+                    op: 4,
+                    d: {
+                      guild_id: guild.id,
+                      channel_id: null,
+                      self_mute: false,
+                      self_deaf: false,
+                    },
+                  });
+                } catch {}
+              }
+
+              // Clean up client voice adapter
+              try {
+                guild.client.voice.adapters.delete(guild.id);
+              } catch {}
+
+              if (currentVoiceChannelId || globalConn) {
+                disconnectedCount++;
+              }
+            } catch (gErr: any) {
+              console.warn(`[FleetGateway] Workspace force disconnect error in guild ${guild.id}:`, gErr?.message || gErr);
+            }
+          }
+        } catch (cErr: any) {
+          console.warn(`[FleetGateway] Workspace force disconnect client error:`, cErr?.message || cErr);
+        }
+      })
+    );
+
+    console.log(`[FleetGateway] Workspace force-disconnect complete for ${workspaceId}. Disconnected ${disconnectedCount} bot voice instance(s)!`);
+    return { total: clients.length, disconnected: disconnectedCount };
+  }
 }

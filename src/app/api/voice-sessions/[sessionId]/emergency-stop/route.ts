@@ -26,10 +26,10 @@ export async function POST(
       'voice:emergency_stop'
     );
 
-    // Trigger immediate emergency halt across gateway, audio feeds, and all Discord bots in parallel
+    // Trigger immediate emergency halt strictly for this workspace in parallel
     await Promise.allSettled([
       mediaGateway.emergencyStop(sessionId, 'emergency_stop'),
-      FleetGatewayService.forceDisconnectAllVoice(),
+      FleetGatewayService.forceDisconnectWorkspaceVoice(session.workspace_id),
     ]);
 
     // Broadcast emergency stop event to all listeners in this workspace
