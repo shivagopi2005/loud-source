@@ -781,7 +781,8 @@ export default function LiveVoiceStudioPage() {
           pcm16[i * 2] = clampedL < 0 ? Math.max(-32768, Math.round(clampedL * 32768)) : Math.min(32767, Math.round(clampedL * 32767));
           pcm16[i * 2 + 1] = clampedR < 0 ? Math.max(-32768, Math.round(clampedR * 32768)) : Math.min(32767, Math.round(clampedR * 32767));
         }
-        ws.send(pcm16.buffer);
+        // Explicit TypedArray view guarantees WebSocket sends a binary frame (opcode 0x2) across all browsers & reverse proxies
+        ws.send(new Uint8Array(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength));
 
         sentCount++;
         if (sentCount % 100 === 1) {
@@ -1463,9 +1464,31 @@ export default function LiveVoiceStudioPage() {
         body: JSON.stringify(sessionPayload),
       });
 
-      const sessionJson = await sessionRes.json();
-      if (!sessionRes.ok) {
-        throw new Error(sessionJson.error?.message || 'Failed to create voice session');
+      const contentType = sessionRes.headers.get('content-type') || '';
+      let sessionJson: any = null;
+      if (contentType.includes('application/json')) {
+        sessionJson = await sessionRes.json();
+        if (!sessionRes.ok) {
+          const detail =
+            sessionJson.error?.message ||
+            sessionJson.message ||
+            (typeof sessionJson.error === 'string' ? sessionJson.error : '') ||
+            'Failed to create voice session';
+          throw new Error(detail);
+        }
+      } else {
+        const text = await sessionRes.text();
+        if (!sessionRes.ok) {
+          throw new Error(
+            sessionRes.status === 504 || sessionRes.status === 502
+              ? 'Server or tunnel timed out while creating voice session. Please retry in a few seconds.'
+              : `Server returned HTTP ${sessionRes.status}: ${text.slice(0, 120)}`
+          );
+        }
+      }
+
+      if (!sessionJson?.data?.sessionId) {
+        throw new Error('Failed to create voice session: Invalid response received from server.');
       }
 
       const { sessionId, mediaToken, endpoints } = sessionJson.data;

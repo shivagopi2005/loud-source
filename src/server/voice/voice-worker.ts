@@ -258,8 +258,8 @@ export class VoiceWorkerInstance {
 
           setupListeners(this.connection);
 
-          // Wait for Voice Connection to be Ready (25s timeout)
-          await entersState(this.connection, VoiceConnectionStatus.Ready, 25_000);
+          // Wait for Voice Connection to be Ready (12s timeout)
+          await entersState(this.connection, VoiceConnectionStatus.Ready, attempt === 1 ? 12_000 : 8_000);
           connected = true;
           break;
         } catch (readyErr: any) {

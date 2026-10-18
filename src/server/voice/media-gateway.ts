@@ -56,14 +56,20 @@ export class MediaGatewayManager {
   public attachServer(serverOrPort: any, fallbackPort?: number): void {
     if (this.wss) return;
 
+    const wsOptions: any = {
+      skipUTF8Validation: true,
+      perMessageDeflate: false,
+      maxPayload: 15 * 1024 * 1024,
+    };
+
     if (typeof serverOrPort === 'number') {
-      this.wss = new WebSocketServer({ port: serverOrPort, host: process.env.HOST || '0.0.0.0' });
+      this.wss = new WebSocketServer({ port: serverOrPort, host: process.env.HOST || '0.0.0.0', ...wsOptions });
       console.log(`[MediaGateway] WebSocket server listening on port ${serverOrPort}`);
       this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         this.handleConnection(ws, req);
       });
     } else {
-      this.wss = new WebSocketServer({ server: serverOrPort, path: '/media-stream' });
+      this.wss = new WebSocketServer({ server: serverOrPort, path: '/media-stream', ...wsOptions });
       console.log(`[MediaGateway] WebSocket server attached to HTTP server path /media-stream`);
       this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         this.handleConnection(ws, req);
@@ -71,7 +77,7 @@ export class MediaGatewayManager {
 
       if (typeof fallbackPort === 'number' && fallbackPort > 0) {
         try {
-          const dedicatedWss = new WebSocketServer({ port: fallbackPort, host: process.env.HOST || '0.0.0.0' });
+          const dedicatedWss = new WebSocketServer({ port: fallbackPort, host: process.env.HOST || '0.0.0.0', ...wsOptions });
           dedicatedWss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
             this.handleConnection(ws, req);
           });
@@ -126,16 +132,41 @@ export class MediaGatewayManager {
       })
     );
 
-    ws.on('message', (data: Buffer | string, isBinary: boolean) => {
-      if (isBinary) {
-        // High-performance binary PCM audio chunk from microphone
-        this.processAudioFrame(session, data as Buffer);
-      } else {
-        // Control message (JSON)
-        try {
-          const msg = JSON.parse(data.toString());
-          this.handleControlMessage(session, msg);
-        } catch {}
+    ws.on('message', (data: Buffer | string | ArrayBuffer, isBinary: boolean) => {
+      try {
+        let buf: Buffer;
+        if (Buffer.isBuffer(data)) {
+          buf = data;
+        } else if (data instanceof ArrayBuffer) {
+          buf = Buffer.from(data);
+        } else if (typeof data === 'string') {
+          const trimmed = data.trim();
+          if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            try {
+              const msg = JSON.parse(trimmed);
+              this.handleControlMessage(session, msg);
+              return;
+            } catch {}
+          }
+          buf = Buffer.from(data, 'binary');
+        } else {
+          buf = Buffer.from(data as any);
+        }
+
+        // If binary or frame doesn't start with '{' (JSON), process as PCM audio frame
+        if (isBinary || (buf.length >= 4 && buf[0] !== 0x7B /* '{' */)) {
+          this.processAudioFrame(session, buf);
+        } else {
+          try {
+            const str = buf.toString('utf8');
+            const msg = JSON.parse(str);
+            this.handleControlMessage(session, msg);
+          } catch {
+            this.processAudioFrame(session, buf);
+          }
+        }
+      } catch (err: any) {
+        console.warn('[MediaGateway] WebSocket frame processing warning:', err?.message || err);
       }
     });
 
@@ -828,7 +859,7 @@ export class MediaGatewayManager {
         for (const worker of session.endpoints.values()) {
           const matchBot =
             worker.botId === botIdOrAppId ||
-            (worker as any).config?.applicationId === botIdOrAppId;
+            worker.applicationId === botIdOrAppId;
           const matchGuild = !guildId || worker.guildId === guildId;
           if (matchBot && matchGuild && (worker.state === 'connected' || worker.state === 'connecting' || worker.state === 'muted')) {
             return {

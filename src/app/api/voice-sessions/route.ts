@@ -284,14 +284,6 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Check if bot is connected and known to NOT be in the guild
-      const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
-      const client = FleetGatewayService.getClient(bot.id, bot.application_id);
-      if (client && client.isReady() && !client.guilds.cache.has(guild.guild_id)) {
-        console.warn(`[CreateVoiceSession] Bot ${bot.display_name} (${bot.id}) is not in guild ${guild.guild_id}, skipping.`);
-        continue;
-      }
-
       // Check if bot is already actively streaming in the same guild in another workspace's session
       const activeVoice = mediaGateway.getActiveBotVoiceSession(bot.application_id || bot.id, guild.guild_id);
       if (activeVoice.inUse && activeVoice.workspaceId !== data.workspaceId) {

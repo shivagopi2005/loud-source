@@ -423,63 +423,66 @@ export class FleetGatewayService {
         isMock: false,
       });
 
-      const client = new Client({
-        intents: [
+      const createBotClient = (includeMessageContent: boolean) => {
+        const intents = [
           GatewayIntentBits.Guilds,
           GatewayIntentBits.GuildVoiceStates,
           GatewayIntentBits.GuildMessages,
-          GatewayIntentBits.MessageContent,
           GatewayIntentBits.DirectMessages,
-        ],
-        makeCache: Options.cacheWithLimits({
-          MessageManager: 0,
-          PresenceManager: 0,
-          ReactionManager: 0,
-          ReactionUserManager: 0,
-          ThreadManager: 0,
-          ThreadMemberManager: 0,
-          StageInstanceManager: 0,
-          GuildScheduledEventManager: 0,
-          GuildBanManager: 0,
-          GuildInviteManager: 0,
-          AutoModerationRuleManager: 0,
-          GuildEmojiManager: 0,
-          GuildStickerManager: 0,
-        }),
-        sweepers: {
-          ...Options.DefaultSweeperSettings,
-          messages: {
-            interval: 120,
-            lifetime: 60,
+        ];
+        if (includeMessageContent) {
+          intents.push(GatewayIntentBits.MessageContent);
+        }
+        return new Client({
+          intents,
+          makeCache: Options.cacheWithLimits({
+            MessageManager: 0,
+            PresenceManager: 0,
+            ReactionManager: 0,
+            ReactionUserManager: 0,
+            ThreadManager: 0,
+            ThreadMemberManager: 0,
+            StageInstanceManager: 0,
+            GuildScheduledEventManager: 0,
+            GuildBanManager: 0,
+            GuildInviteManager: 0,
+            AutoModerationRuleManager: 0,
+            GuildEmojiManager: 0,
+            GuildStickerManager: 0,
+          }),
+          sweepers: {
+            ...Options.DefaultSweeperSettings,
+            messages: {
+              interval: 120,
+              lifetime: 60,
+            },
           },
-        },
-      });
+        });
+      };
 
-      // Attach prefix message listener (!dm, !status, !join, !leave, !fleet, etc.)
-      client.on('messageCreate', (message) => {
-        BotCommandService.handleMessage(client, botId, message).catch((err) =>
-          console.error(`[FleetGateway] Error in messageCreate for bot ${botId}:`, err)
-        );
-      });
+      let client = createBotClient(true);
+      let timeoutHandle: any = null;
 
-      // Attach interaction listener for button clicks (e.g. reveal license key)
-      client.on('interactionCreate', (interaction) => {
-        BotCommandService.handleInteraction(client, botId, interaction).catch((err) =>
-          console.error(`[FleetGateway] Error in interactionCreate for bot ${botId}:`, err)
-        );
-      });
+      const bindClient = (cli: Client, resolve: (val: boolean) => void) => {
+        // Attach prefix message listener (!dm, !status, !join, !leave, !fleet, etc.)
+        cli.on('messageCreate', (message) => {
+          BotCommandService.handleMessage(cli, botId, message).catch((err) =>
+            console.error(`[FleetGateway] Error in messageCreate for bot ${botId}:`, err)
+          );
+        });
 
-      const loginPromise = new Promise<boolean>((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn(`[FleetGateway] Connection timeout for bot ${botId}`);
-          resolve(false);
-        }, 30000);
+        // Attach interaction listener for button clicks
+        cli.on('interactionCreate', (interaction) => {
+          BotCommandService.handleInteraction(cli, botId, interaction).catch((err) =>
+            console.error(`[FleetGateway] Error in interactionCreate for bot ${botId}:`, err)
+          );
+        });
 
-        client.once('ready', async () => {
-          clearTimeout(timeout);
+        cli.once('ready', async () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           try {
-            const isRedirect = FleetGatewayService.isRedirectBot(client) || FleetGatewayService.isRedirectBot(botId);
-            client.user?.setPresence({
+            const isRedirect = FleetGatewayService.isRedirectBot(cli) || FleetGatewayService.isRedirectBot(botId);
+            cli.user?.setPresence({
               status: 'online',
               activities: [
                 {
@@ -491,16 +494,16 @@ export class FleetGatewayService {
               ],
             });
 
-            const botUserId = client.user?.id || '';
+            const botUserId = cli.user?.id || '';
             this.connections.set(botId, {
               botId,
               applicationId: botUserId,
-              displayName: client.user?.username || '',
-              client,
+              displayName: cli.user?.username || '',
+              client: cli,
               status: 'connected',
               isMock: false,
               connectedAt: new Date(),
-              pingMs: client.ws.ping >= 0 ? client.ws.ping : 25,
+              pingMs: cli.ws.ping >= 0 ? cli.ws.ping : 25,
             });
 
             // Sync all bot applications sharing this application ID / user ID to connected
@@ -516,8 +519,7 @@ export class FleetGatewayService {
               });
             } catch {}
 
-            console.log(`[FleetGateway] Bot ${client.user?.tag} (${botId}) is now ONLINE in Discord (!prefix commands enabled)`);
-
+            console.log(`[FleetGateway] Bot ${cli.user?.tag} (${botId}) is now ONLINE in Discord (!prefix commands enabled)`);
             resolve(true);
           } catch (readyErr) {
             console.error(`[FleetGateway] Error in ready handler for bot ${botId}:`, readyErr);
@@ -525,11 +527,11 @@ export class FleetGatewayService {
           }
         });
 
-        client.on('error', (err) => {
+        cli.on('error', (err) => {
           console.error(`[FleetGateway] Discord client error for bot ${botId}:`, err);
         });
 
-        client.on('disconnect', async () => {
+        cli.on('disconnect', async () => {
           console.warn(`[FleetGateway] Bot ${botId} disconnected from Discord Gateway`);
           const conn = this.connections.get(botId);
           if (conn) conn.status = 'disconnected';
@@ -541,7 +543,7 @@ export class FleetGatewayService {
             });
           } catch {}
 
-          const isRedirect = FleetGatewayService.isRedirectBot(client) || FleetGatewayService.isRedirectBot(botId);
+          const isRedirect = FleetGatewayService.isRedirectBot(cli) || FleetGatewayService.isRedirectBot(botId);
           if (isRedirect) {
             console.log(`[FleetGateway] Roynix Loud (OAuth Redirect bot) auto-reconnecting to maintain 100% uptime...`);
             setTimeout(() => {
@@ -549,13 +551,60 @@ export class FleetGatewayService {
             }, 2500);
           }
         });
+      };
+
+      const loginPromise = new Promise<boolean>(async (resolve) => {
+        timeoutHandle = setTimeout(() => {
+          console.warn(`[FleetGateway] Connection timeout for bot ${botId}`);
+          resolve(false);
+        }, 15000);
+
+        bindClient(client, resolve);
+
+        try {
+          await client.login(trimmed);
+        } catch (loginErr: any) {
+          if (
+            loginErr?.message?.includes('disallowed intents') ||
+            loginErr?.code === 'DisallowedIntents' ||
+            loginErr?.message?.includes('4014')
+          ) {
+            console.warn(`[FleetGateway] Bot ${botId} does not have Privileged MessageContent intent enabled. Retrying with standard gateway intents...`);
+            try {
+              client.destroy();
+            } catch {}
+
+            client = createBotClient(false);
+            bindClient(client, resolve);
+            try {
+              await client.login(trimmed);
+            } catch (fallbackErr: any) {
+              if (timeoutHandle) clearTimeout(timeoutHandle);
+              console.error(`[FleetGateway] Fallback login failed for bot ${botId}:`, fallbackErr?.message || fallbackErr);
+              resolve(false);
+            }
+          } else {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            console.error(`[FleetGateway] Failed to connect bot ${botId} to Discord Gateway:`, loginErr.message);
+            resolve(false);
+          }
+        }
       });
 
-      await client.login(trimmed);
       const connected = await loginPromise;
+      if (!connected) {
+        this.connections.set(botId, {
+          botId,
+          applicationId: '',
+          displayName: '',
+          client: null,
+          status: 'error',
+          isMock: false,
+        });
+      }
       return connected;
     } catch (err: any) {
-      console.error(`[FleetGateway] Failed to connect bot ${botId} to Discord Gateway:`, err.message);
+      console.error(`[FleetGateway] Unexpected error connecting bot ${botId}:`, err?.message || err);
       this.connections.set(botId, {
         botId,
         applicationId: '',
