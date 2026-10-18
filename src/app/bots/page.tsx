@@ -34,7 +34,10 @@ function BotFleetContent() {
   const isMaxPlan =
     currentWorkspace?.planId === 'enterprise' ||
     currentWorkspace?.planId === 'developer' ||
-    currentUser?.discordId === '788970167907778562';
+    currentUser?.discordId === '788970167907778562' ||
+    currentUser?.discordId === '261661821' ||
+    currentUser?.username?.toLowerCase() === 'shivagopi2005' ||
+    currentUser?.username?.toLowerCase() === 'root_roy';
 
   const [bots, setBots] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);

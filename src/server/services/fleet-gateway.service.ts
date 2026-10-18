@@ -140,7 +140,7 @@ export class FleetGatewayService {
    * Developer bots are strictly protected: other users CANNOT disconnect them.
    */
   public static async isDeveloperBot(botIdOrAppId: string, applicationId?: string): Promise<boolean> {
-    const DEVELOPER_ID = '788970167907778562';
+    const DEVELOPER_IDS = ['788970167907778562', '261661821'];
     if (!botIdOrAppId && !applicationId) return false;
 
     // 1. Is redirect bot
@@ -166,18 +166,31 @@ export class FleetGatewayService {
       });
 
       for (const b of devBots) {
-        if (b.workspace?.owner?.discord_id === DEVELOPER_ID) {
+        const ownerDiscordId = b.workspace?.owner?.discord_id;
+        const ownerUsername = b.workspace?.owner?.username?.toLowerCase();
+        if (
+          (ownerDiscordId && DEVELOPER_IDS.includes(ownerDiscordId)) ||
+          ownerUsername === 'shivagopi2005' ||
+          ownerUsername === 'root_roy'
+        ) {
           return true;
         }
       }
 
-      // Check if the application_id matches any bot owned by DEVELOPER_ID in any workspace
+      // Check if the application_id matches any bot owned by DEVELOPER_IDS in any workspace
       const targetAppId = devBots[0]?.application_id || applicationId || botIdOrAppId;
       if (targetAppId) {
         const devOwned = await prisma.botApplication.findFirst({
           where: {
             application_id: targetAppId,
-            workspace: { owner: { discord_id: DEVELOPER_ID } },
+            workspace: {
+              owner: {
+                OR: [
+                  { discord_id: { in: DEVELOPER_IDS } },
+                  { username: { in: ['shivagopi2005', 'root_roy'] } },
+                ],
+              },
+            },
           },
         });
         if (devOwned) return true;
@@ -243,13 +256,18 @@ export class FleetGatewayService {
    */
   public static async getFreeTierDeveloperBots(): Promise<any[]> {
     const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
-    const DEVELOPER_ID = '788970167907778562';
+    const DEVELOPER_IDS = ['788970167907778562', '261661821'];
 
     // 1. Look for bots owned by developer account
     let bots = await prisma.botApplication.findMany({
       where: {
         workspace: {
-          owner: { discord_id: DEVELOPER_ID },
+          owner: {
+            OR: [
+              { discord_id: { in: DEVELOPER_IDS } },
+              { username: { in: ['shivagopi2005', 'root_roy'] } },
+            ],
+          },
         },
         operational_role: { not: 'oauth_redirect' },
         display_name: { not: 'Roynix Loud' },
@@ -644,14 +662,18 @@ export class FleetGatewayService {
     force: boolean = false,
     actorDiscordId?: string
   ): Promise<{ success: boolean; error?: string }> {
-    const DEVELOPER_ID = '788970167907778562';
+    const DEVELOPER_IDS = ['788970167907778562', '261661821'];
     const isDev = await this.isDeveloperBot(botId);
+    const isDeveloperActor =
+      (actorDiscordId && DEVELOPER_IDS.includes(actorDiscordId)) ||
+      actorDiscordId === 'shivagopi2005' ||
+      actorDiscordId === 'root_roy';
 
-    if (isDev && !force && actorDiscordId !== DEVELOPER_ID) {
+    if (isDev && !force && !isDeveloperActor) {
       console.warn(`[FleetGateway] Disconnect blocked: Bot ${botId} is a developer bot and actor is ${actorDiscordId}`);
       return {
         success: false,
-        error: 'Developer bot tokens cannot be taken offline by other users. Only the developer (788970167907778562) can make developer bots offline.',
+        error: 'Developer bot tokens cannot be taken offline by other users. Only the developer can make developer bots offline.',
       };
     }
 
@@ -794,7 +816,13 @@ export class FleetGatewayService {
     for (const b of bots) {
       if (this.isRedirectBot(b.id)) continue;
       const isDev = await this.isDeveloperBot(b.id, b.application_id);
-      if (isDev && actorDiscordId !== '788970167907778562') {
+      const DEVELOPER_IDS = ['788970167907778562', '261661821'];
+      const isDeveloperActor =
+        (actorDiscordId && DEVELOPER_IDS.includes(actorDiscordId)) ||
+        actorDiscordId === 'shivagopi2005' ||
+        actorDiscordId === 'root_roy';
+
+      if (isDev && !isDeveloperActor) {
         console.log(`[FleetGateway] Skipped disconnecting developer bot ${b.id} during workspace fleet disconnect.`);
         continue;
       }

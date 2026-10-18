@@ -1458,11 +1458,21 @@ export default function LiveVoiceStudioPage() {
         },
       };
 
-      const sessionRes = await fetch('/api/voice-sessions', {
+      let sessionRes = await fetch('/api/voice-sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sessionPayload),
       });
+
+      // If edge proxy or tunnel timed out, auto-retry once after a short buffer
+      if (sessionRes.status === 504 || sessionRes.status === 502) {
+        await new Promise((r) => setTimeout(r, 1200));
+        sessionRes = await fetch('/api/voice-sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sessionPayload),
+        });
+      }
 
       const contentType = sessionRes.headers.get('content-type') || '';
       let sessionJson: any = null;
@@ -1481,7 +1491,7 @@ export default function LiveVoiceStudioPage() {
         if (!sessionRes.ok) {
           throw new Error(
             sessionRes.status === 504 || sessionRes.status === 502
-              ? 'Server or tunnel timed out while creating voice session. Please retry in a few seconds.'
+              ? 'Server or tunnel connection refreshed. Please click Stream again.'
               : `Server returned HTTP ${sessionRes.status}: ${text.slice(0, 120)}`
           );
         }

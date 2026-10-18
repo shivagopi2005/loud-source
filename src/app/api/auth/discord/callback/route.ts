@@ -135,8 +135,18 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const DEVELOPER_ID = '788970167907778562';
-    const isDeveloper = discordUser.id === DEVELOPER_ID;
+    const DEVELOPER_IDS = ['788970167907778562', '261661821'];
+    const isDeveloper =
+      DEVELOPER_IDS.includes(discordUser.id) ||
+      discordUser.username?.toLowerCase() === 'shivagopi2005' ||
+      discordUser.username?.toLowerCase() === 'root_roy';
+
+    if (isDeveloper && user.tier !== 'developer') {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { tier: 'developer' },
+      });
+    }
 
     // Check if user already belongs to a workspace
     let defaultWorkspaceId = user.memberships[0]?.workspace_id;

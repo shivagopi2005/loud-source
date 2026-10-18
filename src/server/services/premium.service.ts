@@ -3,6 +3,21 @@ import { prisma } from '../db/prisma';
 import { redisConnection } from '../jobs/queue';
 
 export const DEVELOPER_ID = '788970167907778562';
+export const DEVELOPER_IDS = ['788970167907778562', '261661821'];
+export const DEVELOPER_USERNAMES = ['shivagopi2005', 'root_roy'];
+
+export function isDeveloperId(discordId?: string | null): boolean {
+  if (!discordId) return false;
+  return DEVELOPER_IDS.includes(discordId.trim());
+}
+
+export function isDeveloperUser(user?: { discord_id?: string | null; username?: string | null; tier?: string | null } | null): boolean {
+  if (!user) return false;
+  if (user.discord_id && DEVELOPER_IDS.includes(user.discord_id.trim())) return true;
+  if (user.username && DEVELOPER_USERNAMES.includes(user.username.trim().toLowerCase())) return true;
+  if (user.tier === 'developer') return true;
+  return false;
+}
 
 export type TierType =
   | 'trial'
@@ -69,7 +84,7 @@ export class PremiumService {
    */
   public static async getUserTier(discordUserId: string): Promise<UserTierInfo> {
     // 1. Supreme Developer check - unrestricted access
-    if (discordUserId === DEVELOPER_ID) {
+    if (isDeveloperId(discordUserId)) {
       return {
         tier: 'developer',
         displayName: 'Developer',
@@ -105,8 +120,8 @@ export class PremiumService {
       };
     }
 
-    // 3. Developer Tier on User
-    if (user.tier === 'developer') {
+    // 3. Developer Tier on User or Developer Username
+    if (user.tier === 'developer' || isDeveloperUser(user)) {
       return {
         tier: 'developer',
         displayName: 'Developer',

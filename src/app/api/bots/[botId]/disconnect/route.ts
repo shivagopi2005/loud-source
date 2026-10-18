@@ -24,16 +24,22 @@ export async function POST(
     // Retrieve actor's Discord snowflake ID
     const dbUser = await prisma.user.findUnique({
       where: { id: user.userId },
-      select: { discord_id: true },
+      select: { discord_id: true, username: true },
     });
     const actorDiscordId = dbUser?.discord_id || '';
 
-    // Enforce developer protection: only DEVELOPER_ID can disconnect developer bots
+    // Enforce developer protection: only developers can disconnect developer bots
     const isDevBot = await FleetGatewayService.isDeveloperBot(bot.id, bot.application_id);
-    if (isDevBot && actorDiscordId !== '788970167907778562') {
+    const DEVELOPER_IDS = ['788970167907778562', '261661821'];
+    const isDeveloperActor =
+      (actorDiscordId && DEVELOPER_IDS.includes(actorDiscordId)) ||
+      dbUser?.username?.toLowerCase() === 'shivagopi2005' ||
+      dbUser?.username?.toLowerCase() === 'root_roy';
+
+    if (isDevBot && !isDeveloperActor) {
       return errorResponse(
         'DEVELOPER_BOT_PROTECTED',
-        'Developer bot tokens cannot be taken offline by other users. Only the developer (788970167907778562) can make developer bots offline.',
+        'Developer bot tokens cannot be taken offline by other users. Only the developer can make developer bots offline.',
         403
       );
     }

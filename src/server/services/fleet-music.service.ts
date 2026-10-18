@@ -284,7 +284,7 @@ export class FleetMusicService {
 
     let allBots: any[] = [];
     const userTier = await PremiumService.getUserTier(requestedById);
-    const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && requestedById !== '788970167907778562';
+    const isFreeTier = (userTier.tier === 'trial' || userTier.tier === 'free') && !userTier.isDeveloper;
 
     if (isFreeTier) {
       allBots = await FleetGatewayService.getFreeTierDeveloperBots();

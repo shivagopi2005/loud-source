@@ -365,7 +365,8 @@ export class BotCommandService {
   ): Promise<boolean> {
     try {
       // 0. Supreme Developer: unrestricted master access across all bots
-      if (discordUserId === DEVELOPER_ID) {
+      const DEVELOPER_IDS = ['788970167907778562', '261661821'];
+      if (DEVELOPER_IDS.includes(discordUserId)) {
         return true;
       }
 

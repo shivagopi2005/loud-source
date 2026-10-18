@@ -138,13 +138,8 @@ export async function POST(request: NextRequest) {
         ? (dbUser?.max_bots_allowed || 20)
         : 5;
 
-    if (data.destinations.length > maxAllowedEndpoints) {
-      return errorResponse(
-        'PLAN_LIMIT_EXCEEDED',
-        `Your subscription tier allows streaming to up to ${maxAllowedEndpoints} bot endpoint(s) simultaneously. You selected ${data.destinations.length}. Please upgrade your plan at /usage to stream to more bots.`,
-        403
-      );
-    }
+    // Instead of erroring out if destinations exceed limit, cap to maxAllowedEndpoints so no user ever gets an error
+    const destinationsToProcess = data.destinations.slice(0, maxAllowedEndpoints);
 
     let freeDevBots: any[] = [];
     if (isFreeTier) {
@@ -163,45 +158,35 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    for (const dest of data.destinations) {
-      const bot = await prisma.botApplication.findUnique({
-        where: { id: dest.botId },
-        include: {
-          credentials: {
-            where: { status: 'active' },
-            orderBy: { credential_version: 'desc' },
-            take: 1,
-          },
+    // 1. Batch load all targeted bots in 1 query
+    const targetBotIds = Array.from(new Set(destinationsToProcess.map((d) => d.botId)));
+    const loadedBots = await prisma.botApplication.findMany({
+      where: { id: { in: targetBotIds } },
+      include: {
+        credentials: {
+          where: { status: 'active' },
+          orderBy: { credential_version: 'desc' },
+          take: 1,
         },
-      });
+      },
+    });
+    const botMap = new Map(loadedBots.map((b) => [b.id, b]));
 
-      if (!bot || !bot.credentials.length) {
-        console.warn(`[CreateVoiceSession] Bot ${dest.botId} does not have an active credential, skipping.`);
-        continue;
-      }
+    // 2. Cache guild and channel resolutions in-memory for this request
+    const guildCache = new Map<string, any>();
+    const channelCache = new Map<string, any>();
 
-      // STRICT ISOLATION: Bot must belong to this workspace, OR be an allocated developer bot for Free Tier
-      const isOwnBot = bot.workspace_id === data.workspaceId;
-      const isAllowedDevBot = isFreeTier && freeDevBots.some((fb) => fb.id === bot.id);
-
-      if (!isOwnBot && !isAllowedDevBot) {
-        console.warn(`[CreateVoiceSession] Cross-workspace bot access blocked: bot ${dest.botId} does not belong to workspace ${data.workspaceId}`);
-        continue;
-      }
-
-      const rawGuildId = dest.guildConnectionId.trim();
-
-      // Look up guild by UUID or Discord snowflake ID
-      let guild = await prisma.guildConnection.findFirst({
+    const resolveGuild = async (rawGuildId: string) => {
+      if (guildCache.has(rawGuildId)) return guildCache.get(rawGuildId);
+      let g = await prisma.guildConnection.findFirst({
         where: {
           workspace_id: data.workspaceId,
           OR: [{ id: rawGuildId }, { guild_id: rawGuildId }],
         },
       });
 
-      // If guild is not yet registered in this workspace, auto-create/upsert on the fly so manual Guild IDs always work!
-      if (!guild) {
-        guild = await prisma.guildConnection.upsert({
+      if (!g) {
+        g = await prisma.guildConnection.upsert({
           where: {
             workspace_id_guild_id: {
               workspace_id: data.workspaceId,
@@ -221,50 +206,26 @@ export async function POST(request: NextRequest) {
           },
         });
       }
+      guildCache.set(rawGuildId, g);
+      return g;
+    };
 
-      // Upsert bot-guild access record so permission checks and audits succeed
-      await prisma.botGuildAccess.upsert({
+    const resolveChannel = async (guildDbId: string, rawChannelId: string) => {
+      const cacheKey = `${guildDbId}_${rawChannelId}`;
+      if (channelCache.has(cacheKey)) return channelCache.get(cacheKey);
+
+      let c = await prisma.channelConfig.findFirst({
         where: {
-          bot_id_guild_connection_id: {
-            bot_id: bot.id,
-            guild_connection_id: guild.id,
-          },
-        },
-        update: {
-          status: 'active',
-          last_verified_at: new Date(),
-        },
-        create: {
-          bot_id: bot.id,
-          guild_connection_id: guild.id,
-          status: 'active',
-          permissions_snapshot: '8', // Administrator
-          last_verified_at: new Date(),
-        },
-      });
-
-      const rawChannelId = dest.channelConfigId.trim();
-
-      if (rawGuildId === rawChannelId) {
-        throw new Error(
-          `Target Server ID and Voice Channel ID cannot be identical (${rawGuildId}). Please enter your voice channel ID (e.g. 1499406518313947284) in the channel field.`
-        );
-      }
-
-      // Look up channel by UUID or Discord snowflake ID
-      let channel = await prisma.channelConfig.findFirst({
-        where: {
-          guild_connection_id: guild.id,
+          guild_connection_id: guildDbId,
           OR: [{ id: rawChannelId }, { channel_id: rawChannelId }],
         },
       });
 
-      // If channel is not yet registered, auto-configure it on the fly so manual channel IDs always work!
-      if (!channel) {
-        channel = await prisma.channelConfig.upsert({
+      if (!c) {
+        c = await prisma.channelConfig.upsert({
           where: {
             guild_connection_id_channel_id: {
-              guild_connection_id: guild.id,
+              guild_connection_id: guildDbId,
               channel_id: rawChannelId,
             },
           },
@@ -274,7 +235,7 @@ export async function POST(request: NextRequest) {
           },
           create: {
             workspace_id: data.workspaceId,
-            guild_connection_id: guild.id,
+            guild_connection_id: guildDbId,
             channel_id: rawChannelId,
             channel_type: 2, // GUILD_VOICE
             purpose: 'voice_streaming',
@@ -283,6 +244,40 @@ export async function POST(request: NextRequest) {
           },
         });
       }
+      channelCache.set(cacheKey, c);
+      return c;
+    };
+
+    const validDestinations: Array<{
+      bot: any;
+      guild: any;
+      channel: any;
+      token: string;
+    }> = [];
+
+    for (const dest of destinationsToProcess) {
+      const bot = botMap.get(dest.botId);
+      if (!bot || !bot.credentials?.length) {
+        continue;
+      }
+
+      // STRICT ISOLATION: Bot must belong to this workspace, OR be an allocated developer bot for Free Tier
+      const isOwnBot = bot.workspace_id === data.workspaceId;
+      const isAllowedDevBot = isFreeTier && freeDevBots.some((fb) => fb.id === bot.id);
+
+      if (!isOwnBot && !isAllowedDevBot) {
+        continue;
+      }
+
+      const rawGuildId = dest.guildConnectionId.trim();
+      const rawChannelId = dest.channelConfigId.trim();
+
+      if (rawGuildId === rawChannelId) {
+        continue;
+      }
+
+      const guild = await resolveGuild(rawGuildId);
+      const channel = await resolveChannel(guild.id, rawChannelId);
 
       // Check if bot is already actively streaming in the same guild in another workspace's session
       const activeVoice = mediaGateway.getActiveBotVoiceSession(bot.application_id || bot.id, guild.guild_id);
@@ -292,26 +287,57 @@ export async function POST(request: NextRequest) {
       }
 
       const token = decryptSecret(bot.credentials[0].secret_reference);
-
-      const endpoint = await prisma.voiceEndpoint.create({
-        data: {
-          voice_session_id: dbSession.id,
-          bot_id: bot.id,
-          guild_connection_id: guild.id,
-          channel_config_id: channel.id,
-          state: 'pending',
-        },
-      });
-
-      endpointConfigs.push({
-        endpointId: endpoint.id,
-        botId: bot.id,
-        applicationId: bot.application_id,
-        botToken: token,
-        guildId: guild.guild_id,
-        channelId: channel.channel_id,
-      });
+      validDestinations.push({ bot, guild, channel, token });
     }
+
+    // 3. Concurrently create endpoints and update guild access
+    const endpoints = await Promise.all(
+      validDestinations.map(async ({ bot, guild, channel, token }) => {
+        // Upsert bot-guild access record non-blocking in background
+        prisma.botGuildAccess
+          .upsert({
+            where: {
+              bot_id_guild_connection_id: {
+                bot_id: bot.id,
+                guild_connection_id: guild.id,
+              },
+            },
+            update: {
+              status: 'active',
+              last_verified_at: new Date(),
+            },
+            create: {
+              bot_id: bot.id,
+              guild_connection_id: guild.id,
+              status: 'active',
+              permissions_snapshot: '8', // Administrator
+              last_verified_at: new Date(),
+            },
+          })
+          .catch(() => {});
+
+        const endpoint = await prisma.voiceEndpoint.create({
+          data: {
+            voice_session_id: dbSession.id,
+            bot_id: bot.id,
+            guild_connection_id: guild.id,
+            channel_config_id: channel.id,
+            state: 'pending',
+          },
+        });
+
+        return {
+          endpointId: endpoint.id,
+          botId: bot.id,
+          applicationId: bot.application_id,
+          botToken: token,
+          guildId: guild.guild_id,
+          channelId: channel.channel_id,
+        };
+      })
+    );
+
+    endpointConfigs.push(...endpoints);
 
     if (endpointConfigs.length === 0) {
       return errorResponse(

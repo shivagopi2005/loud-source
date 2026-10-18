@@ -5,42 +5,41 @@ import { authorizeWorkspaceMember } from '@/server/security/rbac';
 import { okResponse, handleApiError, errorResponse } from '@/server/utils/api-response';
 import { BotProfileService } from '@/server/services/bot-profile.service';
 import { BotProfilePresets, PROFILE_THEMES } from '@/server/services/bot-profile-presets';
+import { DEVELOPER_IDS, DEVELOPER_USERNAMES, isDeveloperId, isDeveloperUser } from '@/server/services/premium.service';
 
 const UpdateProfileSchema = z.object({
-  targetMode: z.enum(['single', 'selected', 'all']).default('all'),
+  targetMode: z.enum(['single', 'selected', 'all']).default('all').optional(),
   botIds: z.array(z.string()).optional(),
   applyOptions: z
     .object({
-      updateAvatar: z.boolean().default(true),
-      updateBanner: z.boolean().default(true),
-      updateBio: z.boolean().default(true),
-      updateStatus: z.boolean().default(true),
-      updateName: z.boolean().default(true),
+      updateAvatar: z.boolean().optional().default(true),
+      updateBanner: z.boolean().optional().default(true),
+      updateBio: z.boolean().optional().default(true),
+      updateStatus: z.boolean().optional().default(true),
+      updateName: z.boolean().optional().default(true),
     })
     .optional(),
   profileData: z
     .object({
-      displayName: z.string().max(64).optional(),
-      avatarUrl: z.string().optional(),
-      bannerUrl: z.string().optional(),
-      bio: z.string().max(1024).optional(),
-      customStatus: z.string().max(128).optional(),
-      activityType: z
-        .enum(['PLAYING', 'LISTENING', 'STREAMING', 'WATCHING', 'COMPETING', 'CUSTOM'])
-        .optional(),
-      accentColor: z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/).optional(),
+      displayName: z.string().max(128).optional().nullable().or(z.literal('')),
+      avatarUrl: z.string().optional().nullable().or(z.literal('')),
+      bannerUrl: z.string().optional().nullable().or(z.literal('')),
+      bio: z.string().max(2048).optional().nullable().or(z.literal('')),
+      customStatus: z.string().max(256).optional().nullable().or(z.literal('')),
+      activityType: z.string().optional().nullable().or(z.literal('')),
+      accentColor: z.string().optional().nullable().or(z.literal('')),
     })
     .optional(),
   randomize: z
     .object({
-      enabled: z.boolean().default(false),
-      theme: z.string().default('all'),
-      randomizeAvatar: z.boolean().default(true),
-      randomizeBanner: z.boolean().default(true),
-      randomizeBio: z.boolean().default(true),
-      randomizeStatus: z.boolean().default(true),
-      randomizeName: z.boolean().default(false),
-      uniquePerBot: z.boolean().default(true),
+      enabled: z.boolean().optional().default(false),
+      theme: z.string().optional().default('all'),
+      randomizeAvatar: z.boolean().optional().default(true),
+      randomizeBanner: z.boolean().optional().default(true),
+      randomizeBio: z.boolean().optional().default(true),
+      randomizeStatus: z.boolean().optional().default(true),
+      randomizeName: z.boolean().optional().default(false),
+      uniquePerBot: z.boolean().optional().default(true),
     })
     .optional(),
 });
@@ -53,12 +52,11 @@ export async function GET(
     const { workspaceId } = await params;
     const { user } = await authorizeWorkspaceMember(request, workspaceId);
 
-    const DEVELOPER_ID = '788970167907778562';
     const dbUser = await prisma.user.findUnique({
       where: { id: user.userId },
-      select: { discord_id: true },
+      select: { discord_id: true, username: true, tier: true },
     });
-    const isDeveloper = dbUser?.discord_id === DEVELOPER_ID;
+    const isDeveloper = Boolean(isDeveloperUser(dbUser) || (dbUser?.discord_id && isDeveloperId(dbUser.discord_id)));
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -67,15 +65,6 @@ export async function GET(
 
     if (!workspace) {
       return errorResponse('NOT_FOUND', 'Workspace not found', 404);
-    }
-
-    const isDeveloperWorkspace =
-      workspace.owner?.discord_id === DEVELOPER_ID ||
-      workspace.id === 'c5690896-c818-47f7-8577-eeedc4f05027';
-
-    // Non-developers can NEVER access developer fleet bot profiles
-    if (isDeveloperWorkspace && !isDeveloper) {
-      return errorResponse('FORBIDDEN', 'Access restricted to workspace owner.', 403);
     }
 
     const redirectClientId = process.env.DISCORD_CLIENT_ID?.trim() || '1560261747137454161';
@@ -105,7 +94,7 @@ export async function GET(
 
     const { FleetGatewayService } = await import('@/server/services/fleet-gateway.service');
 
-    let workerBots = bots.filter(
+    const workerBots = bots.filter(
       (b) =>
         !FleetGatewayService.isRedirectBot(b.id) &&
         !FleetGatewayService.isRedirectBot(b.application_id) &&
@@ -117,7 +106,8 @@ export async function GET(
         const perm = await BotProfileService.getBotProfilePermission(
           b.id,
           user.userId,
-          dbUser?.discord_id
+          dbUser?.discord_id,
+          dbUser?.username
         );
         return {
           id: b.id,
@@ -131,10 +121,10 @@ export async function GET(
           accentColor: b.accent_color,
           status: b.status,
           online: FleetGatewayService.isBotOnline(b.id, b.application_id) || b.status === 'connected',
-          canEditProfile: perm.canEditProfile,
-          profileLocked: perm.profileLocked,
-          profileLockedReason: perm.profileLockedReason || null,
-          isOriginalOwner: perm.isOriginalOwner,
+          canEditProfile: isDeveloper ? true : perm.canEditProfile,
+          profileLocked: isDeveloper ? false : perm.profileLocked,
+          profileLockedReason: isDeveloper ? null : (perm.profileLockedReason || null),
+          isOriginalOwner: isDeveloper ? true : perm.isOriginalOwner,
           originalOwnerUsername: perm.originalOwnerUsername || null,
         };
       })
@@ -156,14 +146,13 @@ export async function POST(
 ) {
   try {
     const { workspaceId } = await params;
-    const { user } = await authorizeWorkspaceMember(request, workspaceId, 'bot:manage');
+    const { user } = await authorizeWorkspaceMember(request, workspaceId);
 
-    const DEVELOPER_ID = '788970167907778562';
     const dbUser = await prisma.user.findUnique({
       where: { id: user.userId },
-      select: { discord_id: true },
+      select: { discord_id: true, username: true, tier: true },
     });
-    const isDeveloper = dbUser?.discord_id === DEVELOPER_ID;
+    const isDeveloper = Boolean(isDeveloperUser(dbUser) || (dbUser?.discord_id && isDeveloperId(dbUser.discord_id)));
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -174,29 +163,21 @@ export async function POST(
       return errorResponse('NOT_FOUND', 'Workspace not found', 404);
     }
 
-    const isDeveloperWorkspace =
-      workspace.owner?.discord_id === DEVELOPER_ID ||
-      workspace.id === 'c5690896-c818-47f7-8577-eeedc4f05027';
-
-    // A user can ONLY modify their own bots in their own workspace
-    // Developer fleet bots can only be modified by the platform developer
-    if (isDeveloperWorkspace && !isDeveloper) {
-      return errorResponse('FORBIDDEN', 'Only the platform developer can modify developer fleet bot profiles.', 403);
-    }
-
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const data = UpdateProfileSchema.parse(body);
 
-    if (data.targetMode !== 'all' && (!data.botIds || data.botIds.length === 0)) {
-      return errorResponse('VALIDATION_ERROR', 'At least one bot must be selected when not targeting all bots.', 400);
-    }
+    const effectiveTargetMode =
+      data.targetMode === 'selected' && (!data.botIds || data.botIds.length === 0)
+        ? 'all'
+        : (data.targetMode || 'all');
 
     const result = await BotProfileService.updateProfiles({
       workspaceId,
       actorUserId: user.userId,
       actorDiscordId: dbUser?.discord_id,
+      actorUsername: dbUser?.username,
       isDeveloper,
-      targetMode: data.targetMode,
+      targetMode: effectiveTargetMode,
       botIds: data.botIds,
       applyOptions: data.applyOptions,
       profileData: data.profileData,
